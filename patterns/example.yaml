@@ -1,0 +1,114 @@
+patterns: []
+replacements: []
+
+# Define multi-line blocks to remove
+blocks:
+  # 2025 version
+  - start: ''
+
+  # 2024 version
+  - start: ''
+
+# Process all common code files
+extensions:
+  - rb
+  - py
+  - js
+  - ts
+  - jsx
+  - tsx
+  - java
+  - c
+  - cpp
+  - h
+  - hpp
+  - cs
+  - go
+  - rs
+  - swift
+  - kt
+  - scala
+  - php
+  - sh
+  - bash
+  - zsh
+  - yaml
+  - yml
+  - toml
+  - json
+  - xml
+  - html
+  - css
+  - scss
+  - sass
+  - less
+  - sql
+  - r
+  - R
+  - jl
+  - lua
+  - pl
+  - pm
+  - tcl
+  - m
+  - mm
+  - gradle
+  - groovy
+  - dart
+  - ex
+  - exs
+  - erl
+  - hrl
+  - fs
+  - fsx
+  - fsi
+  - ml
+  - mli
+  - pas
+  - pp
+  - inc
+  - asm
+  - s
+  - S
+
+# Exclude common directories that shouldn't be modified
+exclude:
+  - node_modules
+  - .git
+  - target
+  - build
+  - dist
+  - vendor
+  - __pycache__
+  - .pytest_cache
+  - .mypy_cache
+  - coverage
+  - .coverage
+  - htmlcov
+  - .tox
+  - .eggs
+  - .egg-info
+  - .idea
+  - .vscode
+  - .vs
+  - bin
+  - obj
+  - packages
+  - bower_components
+  - jspm_packages
+  - typings
+  - .sass-cache
+  - .cache
+  - .parcel-cache
+  - .next
+  - out
+  - .nuxt
+  - .vuepress
+  - .docusaurus
+  - public
+  - static
+  - assets
+  - tmp
+  - temp
+  - logs
+  - .log

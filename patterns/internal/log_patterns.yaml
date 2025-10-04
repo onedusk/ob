@@ -1,0 +1,33 @@
+# patterns/development_logs/patterns.yaml
+# A template for scanning typical development log files
+
+patterns:
+  - name: timestamp
+    pattern: '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'  # e.g. 2025-05-16 16:36:02
+
+  - name: log_level
+    pattern: '\b(INFO|DEBUG|WARN|ERROR|TRACE)\b'
+
+  - name: thread_id
+    pattern: 'Thread-\d+'
+
+  - name: user_id
+    pattern: 'user_id=\d+'
+
+  - name: http_request
+    pattern: '\b(GET|POST|PUT|DELETE) /[^\s]+ HTTP/\d\.\d\b'
+
+  - name: http_status
+    pattern: '\b[1-5]\d{2}\b'  # 100599 status codes
+
+  - name: exception_trace
+    pattern: 'Exception in thread'  # Java-style
+
+  - name: stack_trace_line
+    pattern: '^\s+at [\w\.]+\(.+\)$'
+
+  - name: sql_query
+    pattern: '\b(SELECT|INSERT|UPDATE|DELETE) .*? FROM\b'
+
+  - name: uuid
+    pattern: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'

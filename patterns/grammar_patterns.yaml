@@ -1,0 +1,33 @@
+# patterns.yaml
+
+patterns:
+  - name: underscore
+    pattern: "_"
+  - name: pipe
+    # escape the pipe character
+    pattern: "\\|"
+  - name: starts_with_percent
+    pattern: "^%"
+  - name: bullet
+    # Unicode bullet
+    pattern: ""
+  - name: dash
+    pattern: "-"
+  - name: punctuation
+    pattern: "[()?!]"
+  - name: colon
+    pattern: ":"
+  - name: double_colon
+    pattern: "::"
+  - name: items_word
+    # word boundary around Items
+    pattern: "\\bItems\\b"
+  - name: category_header
+    pattern: "^Category:"
+  - name: details_exact
+    pattern: "^Details$"
+  - name: numbered_colon
+    pattern: "^\\d+::"
+  - name: price_usd
+    # dollar sign, digits, optional .00
+    pattern: "^\\$\\d+(\\.\\d{2})?$"

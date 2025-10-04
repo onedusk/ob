@@ -1,0 +1,77 @@
+# Configuration to fix messed up Dusk Labs copyright headers
+patterns: []
+replacements: []
+
+# Define multi-line blocks to remove the duplicated copyright
+blocks:
+  # Remove the entire messed up copyright block including all duplications
+  - start: '# Copyright (c) 2024 Dusk Labs, LLC All Rights Reserved.'
+    end: '# express written permission of Dusk Labs, LLC'
+
+# Process Ruby files and other common code files
+extensions:
+  - rb
+  - py
+  - js
+  - ts
+  - jsx
+  - tsx
+  - java
+  - c
+  - cpp
+  - h
+  - hpp
+  - cs
+  - go
+  - rs
+  - swift
+  - kt
+  - scala
+  - php
+  - sh
+  - bash
+  - zsh
+  - yaml
+  - yml
+  - toml
+
+# Exclude common directories that shouldn't be modified
+exclude:
+  - node_modules
+  - .git
+  - target
+  - build
+  - dist
+  - vendor
+  - __pycache__
+  - .pytest_cache
+  - .mypy_cache
+  - coverage
+  - .coverage
+  - htmlcov
+  - .tox
+  - .eggs
+  - .egg-info
+  - .idea
+  - .vscode
+  - .vs
+  - bin
+  - obj
+  - packages
+  - bower_components
+  - jspm_packages
+  - typings
+  - .sass-cache
+  - .cache
+  - .parcel-cache
+  - .next
+  - out
+  - .nuxt
+  - .vuepress
+  - .docusaurus
+  - public
+  - static
+  - assets
+  - tmp
+  - temp
+  - logs

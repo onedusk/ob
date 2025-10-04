@@ -1,0 +1,52 @@
+{
+  "enabled": true,
+  "auto_stage": true,
+  "stage_threshold": 1,
+  "suggest_commit_after": 3,
+  "batch_timeout_seconds": 300,
+  "sensitive_patterns": [
+    "\\.env$",
+    "\\.env\\.local$",
+    "\\.env\\.\\w+$",
+    ".*\\.(key|pem|p12|pfx)$",
+    ".*\\.secret",
+    ".*_secret",
+    "id_rsa",
+    "id_dsa",
+    "\\.ssh/",
+    "\\.aws/credentials",
+    "\\.npmrc$",
+    ".*\\.local\\.md$"
+  ],
+  "never_stage": [
+    ".env",
+    ".env.local",
+    "secrets.json",
+    "credentials.json",
+    ".DS_Store",
+    "Thumbs.db",
+    "*.tmp",
+    "*.swp",
+    "*.swo"
+  ],
+  "commit_message_templates": {
+    "single_file_create": "Create {file_name}",
+    "single_file_update": "Update {file_name}",
+    "single_file_delete": "Remove {file_name}",
+    "multiple_files_dir": "Update files in {directory}",
+    "multiple_files_type": "Update {extension} files",
+    "multiple_files_generic": "Update {count} files"
+  },
+  "status_emoji": {
+    "staged": "📦",
+    "modified": "📝",
+    "untracked": "🆕",
+    "deleted": "🗑️",
+    "renamed": "📛",
+    "clean": "✨",
+    "warning": "⚠️",
+    "success": "✅",
+    "info": "💡",
+    "status": "📊"
+  }
+}

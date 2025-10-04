@@ -1,0 +1,17 @@
+╭───────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                         │
+│                                                   │
+│   /help for help, /status for your current setup  │
+│                                                   │
+│   cwd: /Users/macadelic/dusk-labs/utils/oober     │
+╰───────────────────────────────────────────────────╯
+════════════════════════════════════════════ Conversation compacted · ctrl+o for history ═══════════════════════════════════════════
+
+> /compact 
+  ⎿  Compacted (ctrl+o to see full summary)
+  ⎿  Read .claude/hooks/validation/README.md (258 lines)
+  ⎿  Read .claude/hooks/validation/validation_config.json (127 lines)
+  ⎿  Referenced file .claude/hooks/protodoc.md
+  ⎿  Read .claude/hooks/validation/validation_orchestrator.py (135 lines)
+  ⎿  Read .claude/hooks/validation/command_validator.py (256 lines)
+
