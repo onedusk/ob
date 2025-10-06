@@ -1,0 +1,260 @@
+<toc version="1.0" llm-optimized="true">
+  <metadata>
+    <totalDocs>50</totalDocs>
+  </metadata>
+  <sections>
+    <chapter id="amazon-bedrock" path="amazon-bedrock.md" modified="2025-10-02T08:54:35Z" size="8037" words="904" readTime="3min" hash="sha256:7e9b2e9ed6f79105">
+      <title>Claude Code on Amazon Bedrock</title>
+      <summary>Claude Code on Amazon Bedrock &gt; Learn about configuring Claude Code through Amazon Bedrock, including setup, IAM configuration, and troubleshooting. ## Prerequisites Before configuring Claude Cod...</summary>
+      <keywords>commands, through, code, **option, environment, ****, thinking, required, default, authentication</keywords>
+    </chapter>
+    <chapter id="analytics" path="analytics.md" modified="2025-10-02T08:54:35Z" size="2458" words="341" readTime="1min" hash="sha256:fbf212ffbd829173">
+      <title>Analytics</title>
+      <summary>Analytics &gt; View detailed usage insights and productivity metrics for your organization&apos;s Claude Code deployment. Claude Code provides an analytics dashboard that helps organizations understand de...</summary>
+      <keywords>access, users, given, track, roles, suggestions, &lt;/note&gt;, available, team, analytics</keywords>
+    </chapter>
+    <chapter id="cli-reference" path="cli-reference.md" modified="2025-10-02T08:54:35Z" size="7669" words="622" readTime="2min" hash="sha256:f5e2351e2ccd5239">
+      <title>CLI reference</title>
+      <summary>CLI reference &gt; Complete reference for Claude Code command-line interface, including commands and flags. ## CLI commands | Command | Description ...</summary>
+      <keywords>programmatic, full, continue, user, code, example, logging, should, list, repl</keywords>
+    </chapter>
+    <chapter id="common-workflows" path="common-workflows.md" modified="2025-10-02T08:54:35Z" size="25142" words="3517" readTime="14min" hash="sha256:4004b1fe2440bbeb">
+      <title>Common workflows</title>
+      <summary>Common workflows &gt; Learn about common workflows with Claude Code. Each task in this document includes clear instructions, example commands, and best practices to help you get the most from Claude ...</summary>
+      <keywords>mode, practices, tips, recommendations&quot;&gt;, names, output, text, available, &lt;note&gt;, worktree&quot;&gt;</keywords>
+    </chapter>
+    <chapter id="context-system-guide" path="context-system-guide.md" modified="2025-10-02T08:54:35Z" size="5925" words="738" readTime="2min" hash="sha256:c41011c7c02fd562">
+      <title>Context-Aware Documentation System Guide</title>
+      <summary>Context-Aware Documentation System Guide ## Overview This guide documents the comprehensive context-aware documentation system implemented for Claude Code, designed to maintain understanding and c...</summary>
+      <keywords>available, configuration, hook, start, reminders, reinforced, posttooluse, update, needed, memory</keywords>
+    </chapter>
+    <chapter id="costs" path="costs.md" modified="2025-10-02T08:54:35Z" size="6510" words="901" readTime="3min" hash="sha256:1225bb4cbc94d0cd">
+      <title>Manage costs effectively</title>
+      <summary>Manage costs effectively &gt; Learn how to track and optimize token usage and costs when using Claude Code. Claude Code consumes tokens for each interaction. The average cost is \$6 per developer per...</summary>
+      <keywords>size, context, processes, installation, &lt;note&gt;, console, behavior, costs, using, requests</keywords>
+    </chapter>
+    <chapter id="data-usage" path="data-usage.md" modified="2025-10-02T08:54:35Z" size="8029" words="906" readTime="3min" hash="sha256:dd1c5e4f5b6bad95">
+      <title>Data usage</title>
+      <summary>Data usage &gt; Learn about Anthropic&apos;s data usage policies for Claude ## Data policies ### Data training policy **Consumer users (Free, Pro, and Max plans)**: Starting August 28, 2025, we&apos;re givin...</summary>
+      <keywords>free, model, more, usage, including, prompts, reporting, claude, models, materials</keywords>
+    </chapter>
+    <chapter id="devcontainer" path="devcontainer.md" modified="2025-10-02T08:54:35Z" size="4416" words="488" readTime="1min" hash="sha256:f2b226218e186226">
+      <title>Development containers</title>
+      <summary>Development containers &gt; Learn about the Claude Code development container for teams that need consistent, secure environments. The reference [devcontainer setup](https://github.com/anthropics/cla...</summary>
+      <keywords>necessary, container, consistent, secure, credentials, code, access, claude, system, team</keywords>
+    </chapter>
+    <chapter id="doc-index" path="doc-index.md" modified="2025-10-02T08:54:35Z" size="3060" words="334" readTime="1min" hash="sha256:fb26ede62faf9a2b">
+      <title>Claude Code Documentation Index</title>
+      <summary>Claude Code Documentation Index ## Core Features Documentation ### Hooks System - **Reference**: [hooks.md](./hooks.md) - Complete hooks reference with all events and configurations - **Guide**: [...</summary>
+      <keywords>creating, specialized, settings, documentation, system, **settings, focused, features, events, code</keywords>
+    </chapter>
+    <chapter id="github-actions" path="github-actions.md" modified="2025-10-02T08:54:35Z" size="26649" words="3038" readTime="12min" hash="sha256:de4f4b56f46236c2">
+      <title>Claude Code GitHub Actions</title>
+      <summary>Claude Code GitHub Actions &gt; Learn about integrating Claude Code into your development workflow with Claude Code GitHub Actions Claude Code GitHub Actions brings AI-powered automation to your GitH...</summary>
+      <keywords>need, comment, attribute, behavior, context, policy, description, pricing, **enable, @claude</keywords>
+    </chapter>
+    <chapter id="gitlab-ci-cd" path="gitlab-ci-cd.md" modified="2025-10-02T08:54:35Z" size="17598" words="2341" readTime="9min" hash="sha256:6b2201f7a6b7be42">
+      <title>Claude Code GitLab CI/CD</title>
+      <summary>Claude Code GitLab CI/CD &gt; Learn about integrating Claude Code into your development workflow with GitLab CI/CD &lt;Info&gt; Claude Code for GitLab CI/CD is currently in beta. Features and functionali...</summary>
+      <keywords>(for, environment, proposes, setting, &lt;tab, security, features, settings, vertex, identity</keywords>
+    </chapter>
+    <chapter id="google-vertex-ai" path="google-vertex-ai.md" modified="2025-10-02T08:54:35Z" size="6048" words="680" readTime="2min" hash="sha256:a9ed91f61818cb0c">
+      <title>Claude Code on Google Vertex AI</title>
+      <summary>Claude Code on Google Vertex AI &gt; Learn about configuring Claude Code through Google Vertex AI, including setup, IAM configuration, and troubleshooting. ## Prerequisites Before configuring Claude...</summary>
+      <keywords>troubleshooting, endpoint, permissions, check, enable, request, quota, supported, ensure, desired</keywords>
+    </chapter>
+    <chapter id="hooks-guide" path="hooks-guide.md" modified="2025-10-02T08:54:35Z" size="9549" words="1128" readTime="4min" hash="sha256:a8347a1951dfe7a5">
+      <title>Get started with Claude Code hooks</title>
+      <summary>Get started with Claude Code hooks &gt; Learn how to customize and extend Claude Code&apos;s behavior by registering shell commands Claude Code hooks are user-defined shell commands that execute at variou...</summary>
+      <keywords>registering, different, complete, command, like, matcher, shell, event, bash, events</keywords>
+    </chapter>
+    <chapter id="hooks" path="hooks.md" modified="2025-10-02T08:54:35Z" size="23040" words="2920" readTime="11min" hash="sha256:218596daf32354ca">
+      <title>Hooks reference</title>
+      <summary>Hooks reference &gt; This page provides reference documentation for implementing hooks in Claude Code. &lt;Tip&gt; For a quickstart guide with examples, see [Get started with Claude Code hooks](/en/docs/...</summary>
+      <keywords>logged, posttooluse, malicious, debug, string, **matchers:**, advanced, guide, tasks, block</keywords>
+    </chapter>
+    <chapter id="iam" path="iam.md" modified="2025-10-02T08:54:35Z" size="11338" words="1453" readTime="5min" hash="sha256:5d57610d909251d9">
+      <title>Identity and Access Management</title>
+      <summary>Identity and Access Management &gt; Learn how to configure user authentication, authorization, and access controls for Claude Code in your organization. ## Authentication methods Setting up Claude C...</summary>
+      <keywords>precedence, security, provided, policy, take, directory, exactly, reads, **relative, code](/en/docs/claude-code/setup#installation)</keywords>
+    </chapter>
+    <chapter id="ide-integrations" path="ide-integrations.md" modified="2025-10-02T08:54:35Z" size="6627" words="951" readTime="3min" hash="sha256:5c42f451d1344a51">
+      <title>Add Claude Code to your IDE</title>
+      <summary>Add Claude Code to your IDE &gt; Learn how to add Claude Code to your favorite IDE Claude Code works great with any Integrated Development Environment (IDE) that has a terminal. Just run `claude`, an...</summary>
+      <keywords>open, restart, files, claude, terminals, running, (windows/linux), troubleshooting, find, integrations</keywords>
+    </chapter>
+    <chapter id="interactive-mode" path="interactive-mode.md" modified="2025-10-02T08:54:35Z" size="4793" words="603" readTime="2min" hash="sha256:64615ef94295923c">
+      <title>Interactive mode</title>
+      <summary>Interactive mode &gt; Complete reference for keyboard shortcuts, input modes, and interactive features in Claude Code sessions. ## Keyboard shortcuts ### General controls | Shortcut | Descr...</summary>
+      <keywords>paste, mode), change, ---------------, beginning, delete, action, terminals, configure, character</keywords>
+    </chapter>
+    <chapter id="legal-and-compliance" path="legal-and-compliance.md" modified="2025-10-02T08:54:35Z" size="1545" words="198" readTime="1min" hash="sha256:0204d2f835282a35">
+      <title>Legal and compliance</title>
+      <summary>Legal and compliance &gt; Legal agreements, compliance certifications, and security information for Claude Code. ## Legal agreements ### License Your use of Claude Code is subject to: * [Commercia...</summary>
+      <keywords>information, users, through, agreements, (baa), claude, subject, agreement, applicable, security</keywords>
+    </chapter>
+    <chapter id="llm-gateway" path="llm-gateway.md" modified="2025-10-02T08:54:35Z" size="4199" words="451" readTime="1min" hash="sha256:20b5de414f605c23">
+      <title>LLM gateway configuration</title>
+      <summary>LLM gateway configuration &gt; Learn how to configure Claude Code with LLM gateway solutions, including LiteLLM setup, authentication methods, and enterprise features like usage tracking and budget ma...</summary>
+      <keywords>anthropic, claude, usage, model, names, methods, litellm, endpoint, custom, tracking</keywords>
+    </chapter>
+    <chapter id="mcp" path="mcp.md" modified="2025-10-02T08:54:35Z" size="37163" words="4310" readTime="17min" hash="sha256:84a885fe250ec6a0">
+      <title>Connect Claude Code to tools via MCP</title>
+      <summary>Connect Claude Code to tools via MCP &gt; Learn how to connect Claude Code to your tools with the Model Context Protocol. export const MCPServersTable = ({platform = &quot;all&quot;}) =&gt; { const generateClau...</summary>
+      <keywords>command, large, installing, like, accessibility, claudecode, update, development, expansion, control</keywords>
+    </chapter>
+    <chapter id="memory" path="memory.md" modified="2025-10-02T08:54:35Z" size="6355" words="756" readTime="3min" hash="sha256:fb91c5ca36a50ad6">
+      <title>Manage Claude&apos;s memory</title>
+      <summary>Manage Claude&apos;s memory &gt; Learn how to manage Claude Code&apos;s memory across sessions with different memory locations and best practices. Claude Code can remember your preferences across sessions, lik...</summary>
+      <keywords>better, convenient, specific, frequently, enterprise, claude, locations, system, more, macos</keywords>
+    </chapter>
+    <chapter id="model-config" path="model-config.md" modified="2025-10-02T08:54:35Z" size="4879" words="534" readTime="2min" hash="sha256:c00bb65754f4dcd9">
+      <title>Model configuration</title>
+      <summary>Model configuration &gt; Learn about the Claude Code model configuration, including model aliases like `opusplan` ## Available models For the `model` setting in Claude Code, you can either configure...</summary>
+      <keywords>claude, using, switches, full, mode, token, (currently, reasoning, **model, settings</keywords>
+    </chapter>
+    <chapter id="monitoring-usage" path="monitoring-usage.md" modified="2025-10-02T08:54:35Z" size="22235" words="2317" readTime="9min" hash="sha256:3f506e5b43b17d67">
+      <title>Monitoring</title>
+      <summary>Monitoring &gt; Learn how to enable and configure OpenTelemetry for Claude Code. Claude Code supports OpenTelemetry (OTel) metrics and events for monitoring and observability. All metrics are time s...</summary>
+      <keywords>high, **attributes**, during, result, true), productivity, interval, performance, unique, alerting</keywords>
+    </chapter>
+    <chapter id="network-config" path="network-config.md" modified="2025-10-02T08:54:35Z" size="3106" words="344" readTime="1min" hash="sha256:30b0ceb28df56f1d">
+      <title>Enterprise network configuration</title>
+      <summary>Enterprise network configuration &gt; Configure Claude Code for enterprise environments with proxy servers, custom Certificate Authorities (CA), and mutual Transport Layer Security (mTLS) authenticati...</summary>
+      <keywords>requiring, authorities, supports, environment, requires, (ca), using, configure, certificates, mutual</keywords>
+    </chapter>
+    <chapter id="output-styles" path="output-styles.md" modified="2025-10-02T08:54:35Z" size="3648" words="520" readTime="2min" hash="sha256:12d774955a3e3596">
+      <title>Output styles</title>
+      <summary>Output styles &gt; Adapt Claude Code for uses beyond software engineering Output styles allow you to use Claude Code as any type of agent while keeping its core capabilities, such as running local sc...</summary>
+      <keywords>tasks, project, create, agent, prompts”, user, built-in, instructions, system, directly</keywords>
+    </chapter>
+    <chapter id="overview" path="overview.md" modified="2025-10-02T08:54:35Z" size="4332" words="525" readTime="2min" hash="sha256:292193171a314151">
+      <title>Claude Code overview</title>
+      <summary>Claude Code overview &gt; Learn about Claude Code, Anthropic&apos;s agentic coding tool that lives in your terminal and helps you turn ideas into code faster than ever before. ## Get started in 30 seconds...</summary>
+      <keywords>coding, codebase, data, &lt;/cardgroup&gt;, learn, [mcp](/en/docs/claude-code/mcp), workflows, common, implementation, code</keywords>
+    </chapter>
+    <chapter id="quickstart" path="quickstart.md" modified="2025-10-02T08:54:35Z" size="8223" words="1203" readTime="4min" hash="sha256:bd2798770a64b026">
+      <title>Quickstart</title>
+      <summary>Quickstart &gt; Welcome to Claude Code! This quickstart guide will have you using AI-powered coding assistance in just a few minutes. By the end, you&apos;ll understand how to use Claude Code for common d...</summary>
+      <keywords>work, [anthropic, let&apos;s, about, code**, step-by-step, &lt;/accordion&gt;, quickstart, **windows, help</keywords>
+    </chapter>
+    <section id="sdk">
+      <title>Sdk</title>
+      <chapter id="sdk-custom-tools" path="sdk/custom-tools.md" modified="2025-10-02T08:54:35Z" size="23275" words="2248" readTime="8min" hash="sha256:b5de83977008e54e">
+        <title>Custom Tools</title>
+        <summary>Custom Tools &gt; Build and integrate custom tools to extend Claude Code SDK functionality Custom tools allow you to extend Claude Code&apos;s capabilities with your own functionality through in-process M...</summary>
+        <keywords>example, custom, claude, option, &lt;/codegroup&gt;, format, extend, tool, server, type</keywords>
+      </chapter>
+      <chapter id="sdk-modifying-system-prompts" path="sdk/modifying-system-prompts.md" modified="2025-10-02T08:54:35Z" size="9598" words="1141" readTime="4min" hash="sha256:40ffad204e8216ad">
+        <title>Modifying system prompts</title>
+        <summary>Modifying system prompts &gt; Learn how to customize Claude&apos;s behavior by modifying system prompts using three approaches - output styles, appendSystemPrompt, and customSystemPrompt. System prompts d...</summary>
+        <keywords>verbosity, duplication, claude, assistant, claude&apos;s, three, maintained, styles, documentation, configurations</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-cost-tracking" path="sdk/sdk-cost-tracking.md" modified="2025-10-02T08:54:35Z" size="11102" words="1269" readTime="5min" hash="sha256:fae4d3a5fc7fcb73">
+        <title>Tracking Costs and Usage</title>
+        <summary>Tracking Costs and Usage &gt; Understand and track token usage for billing in the Claude Code SDK # SDK Cost Tracking The Claude Code SDK provides detailed token usage information for each interacti...</summary>
+        <keywords>costs, same, tokens, usage, reference](/en/docs/claude-code/typescript-sdk-reference), step, &lt;codegroup&gt;, total, understand, billing</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-headless" path="sdk/sdk-headless.md" modified="2025-10-02T08:54:35Z" size="8800" words="932" readTime="3min" hash="sha256:a3887800ab82e9ab">
+        <title>Headless mode</title>
+        <summary>Headless mode &gt; Run Claude Code programmatically without interactive UI ## Overview The headless mode allows you to run Claude Code programmatically from command line scripts and automation tools...</summary>
+        <keywords>options, recent, messages, **use, output, comma-separated, [cli, streaming, space-separated, conversations</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-mcp" path="sdk/sdk-mcp.md" modified="2025-10-02T08:54:35Z" size="7553" words="743" readTime="2min" hash="sha256:5f7f38093fbabb7c">
+        <title>MCP in the SDK</title>
+        <summary>MCP in the SDK &gt; Extend Claude Code with custom tools using Model Context Protocol servers ## Overview Model Context Protocol (MCP) servers extend Claude Code with custom tools and capabilities. ...</summary>
+        <keywords>&lt;/codegroup&gt;, using, servers, creating, guide](/en/docs/claude-code/sdk/custom-tools), tools, claude, context, code, protocol</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-overview" path="sdk/sdk-overview.md" modified="2025-10-02T08:54:35Z" size="4321" words="548" readTime="2min" hash="sha256:13d93fa8287184e2">
+        <title>Overview</title>
+        <summary>Overview &gt; Build custom AI agents with the Claude Code SDK ## SDK Options The Claude Code SDK is available in multiple forms to suit different use cases: * **[Headless Mode](/en/docs/claude-code...</summary>
+        <keywords>review, applications, third-party, build, file, configure, support, available, vertex, providers</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-permissions" path="sdk/sdk-permissions.md" modified="2025-10-02T08:54:35Z" size="18356" words="2060" readTime="8min" hash="sha256:ea987bf510050011">
+        <title>Handling Permissions</title>
+        <summary>Handling Permissions &gt; Control tool usage and permissions in the Claude Code SDK &lt;style&gt; {` .edgeLabel { padding: 8px 12px !important; } .edgeLabel rect { rx: 4; ry...</summary>
+        <keywords>bash, specific, claude, affect, execution, control, approved, normal, auto-approved, implement</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-python" path="sdk/sdk-python.md" modified="2025-10-02T08:54:35Z" size="47751" words="5176" readTime="20min" hash="sha256:da17274c1b6600e1">
+        <title>Python SDK reference</title>
+        <summary>Python SDK reference &gt; Complete API reference for the Claude Code Python SDK, including all functions, types, and classes. ## Choosing Between `query()` and `ClaudeSDKClient` The Python SDK provi...</summary>
+        <keywords>property, server, usage, interface, reference, information, fails, defining, passed, -----------------------------------------</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-sessions" path="sdk/sdk-sessions.md" modified="2025-10-02T08:54:35Z" size="11526" words="1242" readTime="4min" hash="sha256:22f08be0fb8b14c6">
+        <title>Session Management</title>
+        <summary>Session Management &gt; Understanding how the Claude Code SDK handles sessions, session files, and session resumption &lt;style&gt; {` .edgeLabel { padding: 8px 12px !important; } .edge...</summary>
+        <keywords>sessions, handles, file-based, management, files, &lt;codegroup&gt;, enabling, records, initial, session</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-slash-commands" path="sdk/sdk-slash-commands.md" modified="2025-10-02T08:54:35Z" size="12722" words="1465" readTime="5min" hash="sha256:eac1a66a8ab7bdbb">
+        <title>Slash Commands in the SDK</title>
+        <summary>Slash Commands in the SDK &gt; Learn how to use slash commands to control Claude Code sessions through the SDK Slash commands provide a way to control Claude Code sessions with special commands that ...</summary>
+        <keywords>sessions, bash, control, defined, similar, name, like, available, file, commands**</keywords>
+      </chapter>
+      <chapter id="sdk-sdk-typescript" path="sdk/sdk-typescript.md" modified="2025-10-02T08:54:35Z" size="36351" words="4102" readTime="16min" hash="sha256:fd03a7987cb8cbc6">
+        <title>TypeScript SDK reference</title>
+        <summary>TypeScript SDK reference &gt; Complete API reference for the Claude Code TypeScript SDK, including all functions, types, and interfaces. &lt;script src=&quot;/components/typescript-sdk-type-links.js&quot; defer /...</summary>
+        <keywords>type, text, notebook, returned, final, code, readmcpresource, returns, type-safe, return</keywords>
+      </chapter>
+      <chapter id="sdk-streaming-vs-single-mode" path="sdk/streaming-vs-single-mode.md" modified="2025-10-02T08:54:35Z" size="8644" words="877" readTime="3min" hash="sha256:974cc9e7e3f47b3a">
+        <title>Streaming Input</title>
+        <summary>Streaming Input &gt; Understanding the two input modes for Claude Code SDK and when to use each ## Overview The Claude Code SDK supports two distinct input modes for interacting with agents: * **St...</summary>
+        <keywords>message, full, &lt;/codegroup&gt;, claude, &lt;/card&gt;, interactive, code, one-shot, handles, support</keywords>
+      </chapter>
+      <chapter id="sdk-subagents" path="sdk/subagents.md" modified="2025-10-02T08:54:35Z" size="5817" words="756" readTime="3min" hash="sha256:2e4e0a7d2d42b103">
+        <title>Subagents in the SDK</title>
+        <summary>Subagents in the SDK &gt; Working with subagents in the Claude Code SDK Subagents in the Claude Code SDK are specialized AIs that are orchestrated by the main agent. Use subagents for context managem...</summary>
+        <keywords>context, frontmatter, detailed, subagents, created, separate, specific, documentation, access, prompts</keywords>
+      </chapter>
+      <chapter id="sdk-todo-tracking" path="sdk/todo-tracking.md" modified="2025-10-02T08:54:35Z" size="5556" words="603" readTime="2min" hash="sha256:89da2fa7bf2efabf">
+        <title>Todo Lists</title>
+        <summary>Todo Lists &gt; Track and display todos using the Claude Code SDK for organized task management Todo tracking provides a structured way to manage tasks and display progress to users. The Claude Code ...</summary>
+        <keywords>tasks, users, code, &lt;/codegroup&gt;, task, display, tracking, todos, &lt;codegroup&gt;, progress</keywords>
+      </chapter>
+    </section>
+    <chapter id="security" path="security.md" modified="2025-10-02T08:54:35Z" size="7068" words="880" readTime="3min" hash="sha256:6719407b518e91df">
+      <title>Security</title>
+      <summary>Security &gt; Learn about Claude Code&apos;s security safeguards and best practices for safe usage. ## How we approach security ### Security foundation Your code&apos;s security is paramount. Claude Code is ...</summary>
+      <keywords>allowed, uses, executing, request, default, manual, untrusted, through, write, servers</keywords>
+    </chapter>
+    <chapter id="settings" path="settings.md" modified="2025-10-02T08:54:35Z" size="28032" words="2207" readTime="8min" hash="sha256:7ee29ac76a8e574f">
+      <title>Claude Code settings</title>
+      <summary>Claude Code settings &gt; Configure Claude Code with global and project-level settings, and environment variables. Claude Code offers a variety of settings to configure its behavior to meet your need...</summary>
+      <keywords>permission, authentication, context, (e.g, long-running, **project, policies, timeout, shared, subagents</keywords>
+    </chapter>
+    <chapter id="setup" path="setup.md" modified="2025-10-02T08:54:35Z" size="6252" words="777" readTime="3min" hash="sha256:98c6b8570665d0d4">
+      <title>Set up Claude Code</title>
+      <summary>Set up Claude Code &gt; Install, authenticate, and start using Claude Code on your development machine. ## System requirements * **Operating Systems**: macOS 10.15+, Ubuntu 20.04+/Debian 10+, or Win...</summary>
+      <keywords>**option, running, option, command, issues, binary, linux, type, install, **windows</keywords>
+    </chapter>
+    <chapter id="slash-commands" path="slash-commands.md" modified="2025-10-02T08:54:35Z" size="12889" words="1256" readTime="5min" hash="sha256:a92657563011b0d9">
+      <title>Slash commands</title>
+      <summary>Slash commands &gt; Control Claude&apos;s behavior during an interactive session with slash commands. ## Built-in slash commands | Command | Purpose ...</summary>
+      <keywords>execute, tools, clear, (see, files, directory, (user), commands, request, purpose</keywords>
+    </chapter>
+    <chapter id="statusline" path="statusline.md" modified="2025-10-02T08:54:35Z" size="5698" words="740" readTime="2min" hash="sha256:7e9ba7d4046c8f50">
+      <title>Status line configuration</title>
+      <summary>Status line configuration &gt; Create a custom status line for Claude Code to display contextual information Make Claude Code your own with a custom status line that displays at the bottom of the Cla...</summary>
+      <keywords>scripts, example, stdin, line, script, helper, stdout, json, code, information</keywords>
+    </chapter>
+    <chapter id="sub-agents" path="sub-agents.md" modified="2025-10-02T08:54:35Z" size="11804" words="1666" readTime="6min" hash="sha256:4897316c00d2bbb9">
+      <title>Subagents</title>
+      <summary>Subagents &gt; Create and use specialized AI subagents in Claude Code for task-specific workflows and improved context management. Custom subagents in Claude Code are specialized AI assistants that c...</summary>
+      <keywords>specific, make, &lt;/tip&gt;, control, access, create, yours, comma-separated, subagent, grant</keywords>
+    </chapter>
+    <chapter id="terminal-config" path="terminal-config.md" modified="2025-10-02T08:54:35Z" size="2943" words="426" readTime="1min" hash="sha256:f43b3d3ff68b017f">
+      <title>Optimize your terminal setup</title>
+      <summary>Optimize your terminal setup &gt; Claude Code works best when your terminal is properly configured. Follow these guidelines to optimize your experience. ### Themes and appearance Claude cannot contr...</summary>
+      <keywords>iterm, content, newline, notification, bell, tasks, theme, **for, subset, open</keywords>
+    </chapter>
+    <chapter id="third-party-integrations" path="third-party-integrations.md" modified="2025-10-02T08:54:35Z" size="7880" words="883" readTime="3min" hash="sha256:b3a72f412bb13005">
+      <title>Enterprise deployment overview</title>
+      <summary>Enterprise deployment overview &gt; Learn how Claude Code can integrate with various third-party services and infrastructure to meet enterprise deployment requirements. This page provides an overview...</summary>
+      <keywords>centralized, development, more, give, &lt;cardgroup, organizations, audit, custom, vertex, users</keywords>
+    </chapter>
+    <chapter id="troubleshooting" path="troubleshooting.md" modified="2025-10-02T08:54:35Z" size="12072" words="1665" readTime="6min" hash="sha256:81f3ba7936c8e03b">
+      <title>Troubleshooting</title>
+      <summary>Troubleshooting &gt; Discover solutions to common issues with Claude Code installation and usage. ## Common installation issues ### Windows installation issues: errors in WSL You might encounter th...</summary>
+      <keywords>performance, access, restart, consider, language, install, shell, command, local, **option</keywords>
+    </chapter>
+  </sections>
+</toc>
