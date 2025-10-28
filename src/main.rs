@@ -19,7 +19,7 @@ fn main() -> Result<()> {
         println!("⚡ Ultra-fast pattern scanner and code transformer\n");
         println!("QUICK START EXAMPLES:");
         println!("  ob scan .                              # Scan current directory");
-        println!("  ob replace -d . -p 'TODO' -r 'DONE'    # Simple replacement");
+        println!("  ob replace -d . -p 'TODO' -r 'TODO'    # Simple replacement");
         println!("  ob replace -d . --preset CleanDebug    # Remove debug code");
         println!("  ob rename -d . -p 'test_(.*)' -r 'spec_$1'  # Rename files");
         println!("  ob undo -d .                           # Restore from backups\n");
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
                 eprintln!("Error: Missing required argument: --dir <DIR>\n");
                 eprintln!("USAGE EXAMPLES:");
                 eprintln!("  ob replace -d . --preset CleanDebug        # Remove debug code");
-                eprintln!("  ob replace -d . -p 'TODO' -r 'DONE'        # Simple replacement");
+                eprintln!("  ob replace -d . -p 'TODO' -r 'TODO'        # Simple replacement");
                 eprintln!("  ob replace -d . -c config.yaml --dry-run   # Preview changes");
                 eprintln!("  ob replace -d src/ -x py --preset RemoveTodos");
                 eprintln!("\nFor more options: ob replace --help");

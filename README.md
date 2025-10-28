@@ -1,6 +1,6 @@
 # Oober
 
-A high-performance pattern scanning and replacement tool built in Rust. It combines SIMD regex-based file scanning with pattern replacement capabilities, designed with reliability, speed, and efficiency as top priorities to cover a lot of ground fast.
+A pattern scanning and replacement tool built in Rust. It combines SIMD regex-based file scanning with pattern replacement capabilities, designed with reliability, speed, and efficiency as top priorities to cover a lot of ground fast.
 
 ## Overview
 
@@ -61,13 +61,13 @@ ob scan -p patterns.yaml -x js,ts,py /path/to/scan
 
 ```bash
 # Replace using YAML configuration
-ob replace --dir /path/to/process --config replace_config.yaml
+ob replace --dir /Users/macadelic/dusk-labs/shared/packages/jot --config replace_config.yaml
 
 # Preview changes without applying (dry-run)
 ob replace --dir /path --config replace_config.yaml --dry-run
 
 # Single pattern replacement
-ob replace --dir /path --pattern "TODO" --replacement "[DONE]"
+ob replace --dir /path --pattern "TODO" --replacement "[TODO]"
 
 # Replace with specific extensions
 ob replace --dir /path --config replace_config.yaml -x js,ts
@@ -93,7 +93,7 @@ ob undo --dir /path
 ob undo --dir /path --keep-backups
 
 # Remove backup files after verification
-ob clean-backups --dir /path
+ob clean-backups --dir /Users/macadelic/dusk-labs/shared/packages/jot
 
 # Preview backup files before removal (shows total size)
 ob clean-backups --dir /path --dry-run
@@ -134,7 +134,7 @@ patterns:
 
 # Replacements (use null to delete the matched line)
 replacements:
-  - "[DONE]"
+  - "[TODO]"
   - "// console.log"
   - null  # null means delete the matched line
 

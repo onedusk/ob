@@ -1,122 +1,31 @@
 <toc version="1.0" llm-optimized="true">
   <metadata>
-    <totalDocs>20</totalDocs>
+    <totalDocs>3</totalDocs>
   </metadata>
   <sections>
-    <chapter id="changelog" path="CHANGELOG.md" modified="2025-10-02T08:54:35Z" size="2184" words="317" readTime="1min" hash="sha256:891f9fc8330cc461">
-      <title>Changelog</title>
-      <summary>Changelog All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semanti...</summary>
-      <keywords>using, main, rename, removal, alias, examples, block, file, backup, project</keywords>
-    </chapter>
-    <chapter id="context-aware-system" path="context-aware-system.md" modified="2025-10-02T08:54:35Z" size="8989" words="1181" readTime="4min" hash="sha256:d7add33a9f6cee5e">
-      <title>Context-Aware Documentation System User Guide</title>
-      <summary>Context-Aware Documentation System User Guide ## What Is This? The Context-Aware Documentation System is an intelligent framework that ensures Claude Code always has access to relevant documentati...</summary>
-      <keywords>working, starting, feature, example, hook, sessions, **context, during, session, imports</keywords>
-    </chapter>
-    <chapter id="context-system-quick-ref" path="context-system-quick-ref.md" modified="2025-10-02T08:54:35Z" size="5977" words="756" readTime="3min" hash="sha256:04f104c126987baf">
-      <title>Context-Aware System Quick Reference</title>
-      <summary>Context-Aware System Quick Reference ## Essential Commands ### For Users ```bash # Start Claude with documentation context claude # Check current development focus cat .claude/context/current-fo...</summary>
-      <keywords>ensure, docs, commands, success, review, compaction, being, documentation, referenced, files</keywords>
-    </chapter>
-    <chapter id="context-system-troubleshooting" path="context-system-troubleshooting.md" modified="2025-10-02T08:54:35Z" size="9938" words="1331" readTime="5min" hash="sha256:ca2ce813ba3f70ae">
-      <title>Context-Aware System Troubleshooting Guide</title>
-      <summary>Context-Aware System Troubleshooting Guide ## Common Issues and Solutions ### 1. Documentation Not Loading at Session Start #### Symptoms - No &quot;DOCUMENTATION CONTEXT LOADED&quot; message - Claude does...</summary>
-      <keywords>documentation, python, reminders, found, maximum, syntax, missing, json, temporarily, symptoms</keywords>
-    </chapter>
-    <section id="eng-practices">
-      <title>Eng Practices</title>
-      <chapter id="eng-practices-readme" path="eng-practices/README.md" modified="2025-10-06T07:50:53Z" size="1568" words="194" readTime="1min" hash="sha256:fc8e999b9e95bc77">
-        <title>Google Engineering Practices Documentation</title>
-        <summary>Google Engineering Practices Documentation Google has many generalized engineering practices that cover all languages and all projects. These documents represent our collective experience of variou...</summary>
-        <keywords>documents, [the, organizations, review, means, license, code, other, practices, google</keywords>
-      </chapter>
-      <section id="eng-practices-review">
-        <title>Review</title>
-        <section id="eng-practices-review-developer">
-          <title>Developer</title>
-          <chapter id="eng-practices-review-developer-cl-descriptions" path="eng-practices/review/developer/cl-descriptions.md" modified="2025-10-06T07:50:53Z" size="8007" words="1324" readTime="5min" hash="sha256:f1231472e6769e01">
-            <title>Writing good CL descriptions</title>
-            <summary>Writing good CL descriptions A CL description is a public record of change, and it is important that it communicates: 1. **What** change is being made? This should summarize the major changes s...</summary>
-            <keywords>small, freelist, complete, solution, talks, change, should, *why*, keep, imperative</keywords>
+    <section id="shared">
+      <title>Shared</title>
+      <section id="shared-packages">
+        <title>Packages</title>
+        <section id="shared-packages-oober">
+          <title>Oober</title>
+          <chapter id="shared-packages-oober-claude" path="shared/packages/oober/CLAUDE.md" modified="2025-10-19T18:11:09Z" size="8662" words="1171" readTime="4min" hash="sha256:76b71c28be41be22">
+            <title>CLAUDE.md</title>
+            <summary>CLAUDE.md This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. ## Documentation Context - Claude Code Documentation: @docs/claude-code/doc-index.m...</summary>
+            <keywords>codebases, replace/remove, changes, reliability, without, half-assed, restoring, lines, left, should</keywords>
           </chapter>
-          <chapter id="eng-practices-review-developer-handling-comments" path="eng-practices/review/developer/handling-comments.md" modified="2025-10-06T07:50:53Z" size="4367" words="717" readTime="2min" hash="sha256:db3cab260f177821">
-            <title>How to handle reviewer comments</title>
-            <summary>How to handle reviewer comments When you&apos;ve sent a CL out for review, it&apos;s likely that your reviewer will respond with several comments on your CL. Here are some useful things to know about handl...</summary>
-            <keywords>resolving, constructive, send, first, asking, they, readers, collaboratively, think, disagree</keywords>
+          <chapter id="shared-packages-oober-gemini" path="shared/packages/oober/GEMINI.md" modified="2025-10-09T15:40:55Z" size="2865" words="370" readTime="1min" hash="sha256:95e506f4e79d0c95">
+            <title>Oober: High-Performance Pattern Scanning and Replacement Tool</title>
+            <summary>Oober: High-Performance Pattern Scanning and Replacement Tool ## Project Overview Oober is a command-line tool built in Rust for high-performance pattern scanning and replacement in large codebase...</summary>
+            <keywords>scanning, simd-powered, replacement, processing, error, regex, file, pattern, leverages, build</keywords>
           </chapter>
-          <chapter id="eng-practices-review-developer-index" path="eng-practices/review/developer/index.md" modified="2025-10-06T07:50:53Z" size="647" words="95" readTime="1min" hash="sha256:10421c370a34c711">
-            <title>The CL author&apos;s guide to getting through code review</title>
-            <summary>The CL author&apos;s guide to getting through code review The pages in this section contain best practices for developers going through code review. These guidelines should help you get through reviews ...</summary>
-            <keywords>code, [how, through, read, review</keywords>
-          </chapter>
-          <chapter id="eng-practices-review-developer-small-cls" path="eng-practices/review/developer/small-cls.md" modified="2025-10-06T07:50:53Z" size="12289" words="2010" readTime="8min" hash="sha256:6bc55ce9a752bbb2">
-            <title>Small CLs</title>
-            <summary>Small CLs ## Why Write Small CLs? {#why} Small, simple CLs are: - **Reviewed more quickly.** It&apos;s easier for a reviewer to find five minutes several times to review small CLs than to set ...</summary>
-            <keywords>situations, proto, them, don&apos;t, links, break, general, more, data, find</keywords>
-          </chapter>
-        </section>
-        <chapter id="eng-practices-review-emergencies" path="eng-practices/review/emergencies.md" modified="2025-10-06T07:50:53Z" size="3157" words="536" readTime="2min" hash="sha256:f6123a06a6a86b93">
-          <title>Emergencies</title>
-          <summary>Emergencies Sometimes there are emergency CLs that must pass through the entire code review process as quickly as possible. ## What Is An Emergency? {#what} An emergency CL would be a **small**...</summary>
-          <keywords>care, speed, hard, however, date, emergencies, emergency, disastrous, cycle, they</keywords>
-        </chapter>
-        <chapter id="eng-practices-review-index" path="eng-practices/review/index.md" modified="2025-10-06T07:50:53Z" size="2767" words="436" readTime="1min" hash="sha256:c1f1f98dde14d0bb">
-          <title>Untitled</title>
-          <summary>## Introduction {#intro} A code review is a process where someone other than the author(s) of a piece of code examines that code. At Google, we use code review to maintain the quality of our code a...</summary>
-          <keywords>does, look, well-designed, developers, through, piece, reviewer, they, able, correct</keywords>
-        </chapter>
-        <section id="eng-practices-review-reviewer">
-          <title>Reviewer</title>
-          <chapter id="eng-practices-review-reviewer-comments" path="eng-practices/review/reviewer/comments.md" modified="2025-10-06T07:50:53Z" size="4432" words="704" readTime="2min" hash="sha256:35118ebf2eec64df">
-            <title>How to write code review comments</title>
-            <summary>How to write code review comments ## Summary - Be kind. - Explain your reasoning. - Balance giving explicit directions with just pointing out problems and letting the developer decide....</summary>
-            <keywords>instead, example, concurrency, good, pointing, thing, suggestions, problems, giving, general</keywords>
-          </chapter>
-          <chapter id="eng-practices-review-reviewer-index" path="eng-practices/review/reviewer/index.md" modified="2025-10-06T07:50:53Z" size="786" words="120" readTime="1min" hash="sha256:06299c5d45d89545">
-            <title>How to do a code review</title>
-            <summary>How to do a code review The pages in this section contain recommendations on the best way to do code reviews, based on long experience. All together they represent one complete document, broken up ...</summary>
-            <keywords>review, many, read, code</keywords>
-          </chapter>
-          <chapter id="eng-practices-review-reviewer-looking-for" path="eng-practices/review/reviewer/looking-for.md" modified="2025-10-06T07:50:53Z" size="11330" words="1909" readTime="7min" hash="sha256:0a6643fc4ce2bc73">
-            <title>What to look for in a code review</title>
-            <summary>What to look for in a code review Note: Always make sure to take into account [The Standard of Code Review](standard.md) when considering each of these points. ## Design The most important thin...</summary>
-            <keywords>need, about, likely, instead, user, change, needs, write, whole, scan</keywords>
-          </chapter>
-          <chapter id="eng-practices-review-reviewer-navigate" path="eng-practices/review/reviewer/navigate.md" modified="2025-10-06T07:50:53Z" size="4157" words="723" readTime="2min" hash="sha256:6742ba45208ef35a">
-            <title>Navigating a CL in review</title>
-            <summary>Navigating a CL in review ## Summary Now that you know [what to look for](looking-for.md), what&apos;s the most efficient way to manage a review that&apos;s spread across multiple files? 1. Does the cha...</summary>
-            <keywords>they&apos;ve, should, work, step, right, logical, design, even, other, re-work</keywords>
-          </chapter>
-          <chapter id="eng-practices-review-reviewer-pushback" path="eng-practices/review/reviewer/pushback.md" modified="2025-10-06T07:50:53Z" size="4369" words="711" readTime="2min" hash="sha256:a6eeefeee0f786c5">
-            <title>Handling pushback in code reviews</title>
-            <summary>Handling pushback in code reviews Sometimes a developer will push back on a code review. Either they will disagree with your suggestion or they will complain that you are being too strict in gene...</summary>
-            <keywords>should, does, issue, reviewer, believe, fade, code, health, back, change</keywords>
-          </chapter>
-          <chapter id="eng-practices-review-reviewer-speed" path="eng-practices/review/reviewer/speed.md" modified="2025-10-06T07:50:53Z" size="7154" words="1184" readTime="4min" hash="sha256:06d02508ad748ed9">
-            <title>Speed of Code Reviews</title>
-            <summary>Speed of Code Reviews ## Why Should Code Reviews Be Fast? {#why} **At Google, we optimize for the speed at which a team of developers can produce a product together**, as opposed to optimizing f...</summary>
-            <keywords>thing, time, slow, other, coding, reviewers, least, process, task, don&apos;t</keywords>
-          </chapter>
-          <chapter id="eng-practices-review-reviewer-standard" path="eng-practices/review/reviewer/standard.md" modified="2025-10-06T07:50:53Z" size="5745" words="948" readTime="3min" hash="sha256:c37144f9f8880092">
-            <title>The Standard of Code Review</title>
-            <summary>The Standard of Code Review The primary purpose of code review is to make sure that the overall code health of Google&apos;s code base is improving over time. All of the tools and processes of code re...</summary>
-            <keywords>order, polish, they, perfect, otherwise, even, conflict, especially, general, design</keywords>
+          <chapter id="shared-packages-oober-readme" path="shared/packages/oober/README.md" modified="2025-10-19T18:11:10Z" size="11432" words="1590" readTime="6min" hash="sha256:6217dd993bfdfc7f">
+            <title>Oober</title>
+            <summary>Oober A pattern scanning and replacement tool built in Rust. It combines SIMD regex-based file scanning with pattern replacement capabilities, designed with reliability, speed, and efficiency as to...</summary>
+            <keywords>find, simd-powered, directories, atomic, multiple, automatic, safe, restoring, regex, block</keywords>
           </chapter>
         </section>
       </section>
-    </section>
-    <chapter id="git-sync-hook-guide" path="git-sync-hook-guide.md" modified="2025-10-02T08:54:35Z" size="5988" words="810" readTime="3min" hash="sha256:150b63c31f95e262">
-      <title>Git Sync Hook Guide</title>
-      <summary>Git Sync Hook Guide ## Overview The Git Sync Hook automatically manages your Git staging area after file modifications in Claude Code. It follows safe Git practices by staging changes but never au...</summary>
-      <keywords>runs, check, awareness, provides, suggestions, maintain, full, works, verify, automatically</keywords>
-    </chapter>
-    <section id="guides">
-      <title>Guides</title>
-      <chapter id="guides-guide" path="guides/guide.md" modified="2025-10-02T08:54:35Z" size="3701" words="475" readTime="1min" hash="sha256:403d2140781cca0c">
-        <title>Development</title>
-        <summary>Development ## Objective Begin planning out the project in a logical, methodical, and strategic manner. ## Core Principles - Keep implementations simple and complete - complex things must be simpl...</summary>
-        <keywords>different, components, assess, must, dependencies, planning, steps, principles, format, project</keywords>
-      </chapter>
     </section>
   </sections>
 </toc>

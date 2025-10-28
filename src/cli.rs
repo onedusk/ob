@@ -119,7 +119,7 @@ pub enum Commands {
     ///
     /// EXAMPLES:
     ///   ob replace -d . --preset CleanDebug        # Remove all debug code
-    ///   ob replace -d . -p 'TODO' -r 'DONE'        # Simple replacement
+    ///   ob replace -d . -p 'TODO' -r 'TODO'        # Simple replacement
     ///   ob replace -d . -c config.yaml --dry-run   # Preview changes
     ///   ob replace -d src/ -x py --preset RemoveTodos
     ///

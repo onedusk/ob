@@ -152,7 +152,7 @@ patterns:
   - "print\\(.*\\)"
 
 replacements:
-  - "[DONE]"
+  - "[TODO]"
   - "// console.log"
   - null  # null means delete the next line
 

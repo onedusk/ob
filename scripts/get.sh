@@ -1,4 +1,4 @@
-#!/bin/bash/env zsh
+#!/usr/bin/env zsh
 
 # echo "# uber_scanner" >> README.md
 git init;

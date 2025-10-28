@@ -2,3 +2,14 @@
 docs/un-forgotten-log-analyses
 output
 scripts/orchestrate-refactor.sh
+patterns/internal/
+docs/eng-practices/
+docs/internal/
+docs/guides/
+Cargo.lock
+.jotignore
+jot.yaml
+toc.xml
+.claude/
+.ctxt/
+.tks
