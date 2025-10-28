@@ -7,16 +7,16 @@
       <title>Shared</title>
       <section id="shared-packages">
         <title>Packages</title>
-        <section id="shared-packages-oober">
-          <title>Oober</title>
-          <section id="shared-packages-oober-docs">
+        <section id="shared-packages-ob">
+          <title>Ob</title>
+          <section id="shared-packages-ob-docs">
             <title>Docs</title>
-            <section id="shared-packages-oober-docs-eng-practices">
+            <section id="shared-packages-ob-docs-eng-practices">
               <title>Eng Practices</title>
-              <chapter id="shared-packages-oober-docs-eng-practices-readme" path="shared/packages/oober/docs/eng-practices/README.md" modified="2025-10-13T19:31:18Z" size="1568" words="194" readTime="1min" hash="sha256:fc8e999b9e95bc77">
+              <chapter id="shared-packages-ob-docs-eng-practices-readme" path="shared/packages/ob/docs/eng-practices/README.md" modified="2025-10-13T19:31:18Z" size="1568" words="194" readTime="1min" hash="sha256:fc8e999b9e95bc77">
                 <title>Google Engineering Practices Documentation</title>
                 <summary>Google Engineering Practices Documentation Google has many generalized engineering practices that cover all languages and all projects. These documents represent our collective experience of variou...</summary>
-                <keywords>possible, engineering, practices, terminology, google, change, organizations, [the, license, documents</keywords>
+                <keywords>review, code, means, license, change, possible, google, engineering, other, practices</keywords>
               </chapter>
             </section>
           </section>

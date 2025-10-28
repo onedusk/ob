@@ -1,28 +1,18 @@
 <toc version="1.0" llm-optimized="true">
   <metadata>
-    <totalDocs>3</totalDocs>
+    <totalDocs>1</totalDocs>
   </metadata>
   <sections>
     <section id="shared">
       <title>Shared</title>
       <section id="shared-packages">
         <title>Packages</title>
-        <section id="shared-packages-oober">
-          <title>Oober</title>
-          <chapter id="shared-packages-oober-claude" path="shared/packages/oober/CLAUDE.md" modified="2025-10-19T18:11:09Z" size="8662" words="1171" readTime="4min" hash="sha256:76b71c28be41be22">
-            <title>CLAUDE.md</title>
-            <summary>CLAUDE.md This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository. ## Documentation Context - Claude Code Documentation: @docs/claude-code/doc-index.m...</summary>
-            <keywords>codebases, replace/remove, changes, reliability, without, half-assed, restoring, lines, left, should</keywords>
-          </chapter>
-          <chapter id="shared-packages-oober-gemini" path="shared/packages/oober/GEMINI.md" modified="2025-10-09T15:40:55Z" size="2865" words="370" readTime="1min" hash="sha256:95e506f4e79d0c95">
-            <title>Oober: High-Performance Pattern Scanning and Replacement Tool</title>
-            <summary>Oober: High-Performance Pattern Scanning and Replacement Tool ## Project Overview Oober is a command-line tool built in Rust for high-performance pattern scanning and replacement in large codebase...</summary>
-            <keywords>scanning, simd-powered, replacement, processing, error, regex, file, pattern, leverages, build</keywords>
-          </chapter>
-          <chapter id="shared-packages-oober-readme" path="shared/packages/oober/README.md" modified="2025-10-19T18:11:10Z" size="11432" words="1590" readTime="6min" hash="sha256:6217dd993bfdfc7f">
+        <section id="shared-packages-ob">
+          <title>Ob</title>
+          <chapter id="shared-packages-ob-readme" path="shared/packages/ob/README.md" modified="2025-10-19T18:11:10Z" size="11432" words="1590" readTime="6min" hash="sha256:6217dd993bfdfc7f">
             <title>Oober</title>
             <summary>Oober A pattern scanning and replacement tool built in Rust. It combines SIMD regex-based file scanning with pattern replacement capabilities, designed with reliability, speed, and efficiency as to...</summary>
-            <keywords>find, simd-powered, directories, atomic, multiple, automatic, safe, restoring, regex, block</keywords>
+            <keywords>designed, parallel, temporary, traversal, rust, lines, process, options, empty, **gitignore</keywords>
           </chapter>
         </section>
       </section>
