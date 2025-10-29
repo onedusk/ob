@@ -61,7 +61,7 @@ ob scan -p patterns.yaml -x js,ts,py /path/to/scan
 
 ```bash
 # Replace using YAML configuration
-ob replace --dir /Users/macadelic/dusk-labs/shared/packages/jot --config replace_config.yaml
+ob replace --dir /Users/macadelic/dusk-indust/products/iot/abel --config replace_config.yaml
 
 # Preview changes without applying (dry-run)
 ob replace --dir /path --config replace_config.yaml --dry-run
