@@ -9,10 +9,10 @@
         <title>Packages</title>
         <section id="shared-packages-ob">
           <title>Ob</title>
-          <chapter id="shared-packages-ob-readme" path="shared/packages/ob/README.md" modified="2025-10-19T18:11:10Z" size="11432" words="1590" readTime="6min" hash="sha256:6217dd993bfdfc7f">
+          <chapter id="shared-packages-ob-readme" path="shared/packages/ob/README.md" modified="2025-10-28T23:46:13Z" size="11432" words="1590" readTime="6min" hash="sha256:f910b263fb614d7f">
             <title>Oober</title>
             <summary>Oober A pattern scanning and replacement tool built in Rust. It combines SIMD regex-based file scanning with pattern replacement capabilities, designed with reliability, speed, and efficiency as to...</summary>
-            <keywords>designed, parallel, temporary, traversal, rust, lines, process, options, empty, **gitignore</keywords>
+            <keywords>processing**, engine, writes**, pattern, parallel, stream, multiple, features, yaml, large</keywords>
           </chapter>
         </section>
       </section>
