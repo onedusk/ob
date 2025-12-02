@@ -12,7 +12,7 @@
           <chapter id="shared-packages-ob-readme" path="shared/packages/ob/README.md" modified="2025-10-28T23:46:13Z" size="11432" words="1590" readTime="6min" hash="sha256:f910b263fb614d7f">
             <title>Oober</title>
             <summary>Oober A pattern scanning and replacement tool built in Rust. It combines SIMD regex-based file scanning with pattern replacement capabilities, designed with reliability, speed, and efficiency as to...</summary>
-            <keywords>rust&apos;s, architecture, gitignore-aware, rust, large, oober, line, tool, file, find</keywords>
+            <keywords>yaml, block, applying, processing**, restore, regex, single, seconds, line, automatically</keywords>
           </chapter>
         </section>
       </section>
