@@ -12,7 +12,7 @@
           <chapter id="shared-packages-ob-readme" path="shared/packages/ob/README.md" modified="2025-10-28T23:46:13Z" size="11432" words="1590" readTime="6min" hash="sha256:f910b263fb614d7f">
             <title>Oober</title>
             <summary>Oober A pattern scanning and replacement tool built in Rust. It combines SIMD regex-based file scanning with pattern replacement capabilities, designed with reliability, speed, and efficiency as to...</summary>
-            <keywords>temporary, yaml, scanning, removes, **gitignore, threads, files, structure, rust, memory</keywords>
+            <keywords>patterns, file, code, simd-powered, line-by-line, parallel, remove, **atomic, rename, pattern</keywords>
           </chapter>
         </section>
       </section>

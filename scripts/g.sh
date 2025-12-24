@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # echo "# ob" >> README.md
+git s-p onedusk;
 git init;
 git add -A;
 git commit -m "first commit";
