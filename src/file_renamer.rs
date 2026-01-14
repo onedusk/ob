@@ -4,7 +4,8 @@ use rayon::prelude::*;
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// Executes the file renaming process in a given directory.
 ///
@@ -25,6 +26,7 @@ pub fn run_rename(
     pattern: String,
     replacement: String,
     dry_run: bool,
+    verbose: bool,
     workers: Option<usize>,
 ) -> Result<()> {
     let regex = Regex::new(&pattern)?;
@@ -42,9 +44,9 @@ pub fn run_rename(
         }
     }
 
-    // TODO: For better performance, consider using `Arc<AtomicUsize>` instead of `Mutex`
-    // for these simple counters to avoid lock contention in the parallel loop.
-    let stats = Arc::new(Mutex::new((0, 0))); // (processed, renamed)
+    let processed = AtomicUsize::new(0);
+    let renamed = AtomicUsize::new(0);
+    let log_changes = verbose || dry_run;
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers.unwrap_or_else(|| {
@@ -57,27 +59,24 @@ pub fn run_rename(
     pool.install(|| {
         all_files.par_iter().for_each(|path| {
             match replacer.rename_file(path, dry_run) {
-                Ok(renamed) => {
-                    if renamed {
-                        let mut s = stats.lock().unwrap();
-                        s.1 += 1;
-                        println!("Renamed: {} -> {}", path.display(), replacer.get_new_path(path).display());
+                Ok(Some(new_path)) => {
+                    renamed.fetch_add(1, Ordering::Relaxed);
+                    if log_changes {
+                        println!("Renamed: {} -> {}", path.display(), new_path.display());
                     }
                 }
+                Ok(None) => {}
                 Err(e) => {
                     eprintln!("Error renaming file {}: {}", path.display(), e);
                 }
             }
-            let mut s = stats.lock().unwrap();
-            s.0 += 1;
+            processed.fetch_add(1, Ordering::Relaxed);
         });
     });
 
-    let final_stats = stats.lock().unwrap();
-    println!("
-{}", "-".repeat(50));
-    println!("Files scanned: {}", final_stats.0);
-    println!("Files renamed: {}", final_stats.1);
+    println!("\n{}", "-".repeat(50));
+    println!("Files scanned: {}", processed.load(Ordering::Relaxed));
+    println!("Files renamed: {}", renamed.load(Ordering::Relaxed));
 
     Ok(())
 }
@@ -114,17 +113,17 @@ impl FileRenamer {
     ///
     /// # Returns
     ///
-    /// Returns `Ok(true)` if the file was (or would be) renamed, and `Ok(false)` otherwise.
-    fn rename_file(&self, path: &Path, dry_run: bool) -> Result<bool> {
+    /// Returns `Ok(Some(new_path))` if the file was (or would be) renamed, and `Ok(None)` otherwise.
+    fn rename_file(&self, path: &Path, dry_run: bool) -> Result<Option<PathBuf>> {
         let file_name = path.file_name().unwrap().to_str().unwrap();
         if self.regex.is_match(file_name) {
             let new_path = self.get_new_path(path);
             if !dry_run {
                 fs::rename(path, &new_path)?;
             }
-            Ok(true)
+            Ok(Some(new_path))
         } else {
-            Ok(false)
+            Ok(None)
         }
     }
 }

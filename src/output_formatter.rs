@@ -77,7 +77,7 @@ impl OutputFormatter {
     pub fn write_output<W: Write>(
         &self,
         writer: &mut W,
-        matches: Vec<Match>,
+        matches: &[Match],
     ) -> Result<()> {
         let output = match self.format {
             OutputFormat::Text => self.format_text(&matches)?,
@@ -103,11 +103,11 @@ impl OutputFormatter {
         
         for m in matches {
             output.push_str(&format!(
-                "{}:{}:{}: {}\n",
+                "[{}] {}:{}: {}\n",
+                m.pattern_name,
                 m.file_path.display(),
                 m.line_number,
-                m.pattern_name,
-                m.line_content.trim()
+                m.line_content
             ));
         }
         
@@ -541,7 +541,10 @@ mod tests {
         let headers = rdr.headers().unwrap();
         assert_eq!(headers.get(0), Some("Pattern"));
         
-        let records: Vec<_> = rdr.records().collect::<Result<_, _>>().unwrap();
+        let records: Vec<_> = rdr
+            .records()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
         assert_eq!(records.len(), 2);
     }
     

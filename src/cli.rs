@@ -168,6 +168,10 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
 
+        /// Print each modified file (useful for audits; slower on large runs).
+        #[arg(short, long)]
+        verbose: bool,
+
         /// The number of parallel worker threads to use.
         #[arg(short, long)]
         workers: Option<usize>,
@@ -227,6 +231,10 @@ pub enum Commands {
         /// Preview the renames without actually renaming any files.
         #[arg(long)]
         dry_run: bool,
+
+        /// Print each renamed file (slower on large runs).
+        #[arg(short, long)]
+        verbose: bool,
 
         /// The number of parallel worker threads to use.
         #[arg(short, long)]

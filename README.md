@@ -61,7 +61,7 @@ ob scan -p patterns.yaml -x js,ts,py /path/to/scan
 
 ```bash
 # Replace using YAML configuration
-ob replace --dir /Users/macadelic/dusk-indust/products/iot/abel --config replace_config.yaml
+ob replace --dir /Users/macadelic/dusk-indust/company/sandbox/lotide --config replace_config.yaml
 
 # Preview changes without applying (dry-run)
 ob replace --dir /path --config replace_config.yaml --dry-run
@@ -249,7 +249,10 @@ Options:
 - `-p, --patterns <FILE>` - Path to YAML patterns file (default: patterns.yaml)
 - `-o, --output <FILE>` - Output file (default: stdout)
 - `-x, --ext <EXTENSIONS>` - Comma-separated file extensions to include
+- `-w, --workers <N>` - Number of threads to use (default: logical CPU cores)
 - `<INPUTS>...` - Files or directories to scan
+
+Note: Output order is not guaranteed when using multiple workers. Use `-w 1` or sort the output for deterministic ordering.
 
 ### `replace`
 

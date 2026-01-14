@@ -5,10 +5,12 @@ use crate::patterns::PatternManager;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::Regex;
+use std::borrow::Cow;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use tempfile::NamedTempFile;
 
 /// Core engine for finding and replacing patterns in files.
@@ -108,15 +110,15 @@ impl Replacer {
     pub fn process_file(&self, path: &Path, options: ProcessOptions) -> Result<ProcessResult> {
         // Read file
         let content = fs::read_to_string(path)?;
-        let mut new_content = content.clone();
+        let mut new_content = Cow::Borrowed(content.as_str());
         let mut total_changes = 0;
 
         // Remove blocks first
         for block in &self.blocks {
-            let matches = block.regex.find_iter(&new_content).count();
+            let matches = block.regex.find_iter(new_content.as_ref()).count();
             if matches > 0 {
                 total_changes += matches;
-                new_content = block.regex.replace_all(&new_content, "").to_string();
+                new_content = Cow::Owned(block.regex.replace_all(new_content.as_ref(), "").into_owned());
             }
         }
 
@@ -126,26 +128,26 @@ impl Replacer {
         // which would preserve formatting more reliably. For now, this is a
         // simple heuristic.
         if total_changes > 0 {
-            new_content = clean_empty_lines(&new_content);
+            new_content = Cow::Owned(clean_empty_lines(new_content.as_ref()));
         }
 
         // Process patterns
         for (i, pattern) in self.patterns.iter().enumerate() {
             if let Some(ref replacement) = self.replacements[i] {
                 // Replace pattern
-                let matches = pattern.find_iter(&new_content).count();
+                let matches = pattern.find_iter(new_content.as_ref()).count();
                 if matches > 0 {
                     total_changes += matches;
-                    new_content = pattern.replace_all(&new_content, replacement).to_string();
+                    new_content =
+                        Cow::Owned(pattern.replace_all(new_content.as_ref(), replacement).into_owned());
                 }
             } else {
                 // Delete lines after pattern
-                let lines: Vec<&str> = new_content.lines().collect();
                 let mut new_lines = Vec::new();
                 let mut skip_next = false;
                 let mut removed = 0;
 
-                for line in lines {
+                for line in new_content.lines() {
                     if skip_next {
                         removed += 1;
                         skip_next = false;
@@ -160,10 +162,11 @@ impl Replacer {
 
                 if removed > 0 {
                     total_changes += removed;
-                    new_content = new_lines.join("\n");
-                    if !new_content.ends_with('\n') && content.ends_with('\n') {
-                        new_content.push('\n');
+                    let mut joined = new_lines.join("\n");
+                    if !joined.ends_with('\n') && content.ends_with('\n') {
+                        joined.push('\n');
                     }
+                    new_content = Cow::Owned(joined);
                 }
             }
         }
@@ -178,7 +181,7 @@ impl Replacer {
             // Write atomically using tempfile
             if let Some(parent) = path.parent() {
                 let mut temp_file = NamedTempFile::new_in(parent)?;
-                temp_file.write_all(new_content.as_bytes())?;
+                temp_file.write_all(new_content.as_ref().as_bytes())?;
 
                 // Preserve file permissions
                 let perms = fs::metadata(path)?.permissions();
@@ -244,6 +247,7 @@ pub fn run_replace(
     exclude: Vec<String>,
     no_backup: bool,
     dry_run: bool,
+    verbose: bool,
     workers: Option<usize>,
 ) -> Result<()> {
     // Load or create config
@@ -319,7 +323,9 @@ pub fn run_replace(
     }
 
     // Stats
-    let stats = Arc::new(Mutex::new((0usize, 0usize, 0usize))); // processed, modified, total_changes
+    let processed = AtomicUsize::new(0);
+    let modified = AtomicUsize::new(0);
+    let total_changes = AtomicUsize::new(0);
 
     // Process files in parallel
     let pool = rayon::ThreadPoolBuilder::new()
@@ -335,23 +341,26 @@ pub fn run_replace(
         dry_run,
     };
 
+    let log_changes = verbose || dry_run;
+
     pool.install(|| {
         all_files.par_iter().for_each(|path| {
             match replacer.process_file(path, options.clone()) {
                 Ok(result) => {
-                    let mut s = stats.lock().unwrap();
-                    s.0 += 1; // processed
+                    processed.fetch_add(1, Ordering::Relaxed);
                     if result.modified {
-                        s.1 += 1; // modified files
-                        s.2 += result.changes; // total changes
-                        if dry_run {
-                            println!(
-                                "DRY Modified {} ({} changes)",
-                                path.display(),
-                                result.changes
-                            );
-                        } else {
-                            println!("Modified {} ({} changes)", path.display(), result.changes);
+                        modified.fetch_add(1, Ordering::Relaxed);
+                        total_changes.fetch_add(result.changes, Ordering::Relaxed);
+                        if log_changes {
+                            if dry_run {
+                                println!(
+                                    "DRY Modified {} ({} changes)",
+                                    path.display(),
+                                    result.changes
+                                );
+                            } else {
+                                println!("Modified {} ({} changes)", path.display(), result.changes);
+                            }
                         }
                     }
                 }
@@ -362,11 +371,10 @@ pub fn run_replace(
         });
     });
 
-    let final_stats = stats.lock().unwrap();
     println!("\n{}", "-".repeat(50));
-    println!("Files scanned : {}", final_stats.0);
-    println!("Files changed : {}", final_stats.1);
-    println!("Total edits   : {}", final_stats.2);
+    println!("Files scanned : {}", processed.load(Ordering::Relaxed));
+    println!("Files changed : {}", modified.load(Ordering::Relaxed));
+    println!("Total edits   : {}", total_changes.load(Ordering::Relaxed));
 
     Ok(())
 }
