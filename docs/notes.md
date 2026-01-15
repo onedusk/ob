@@ -1,0 +1,2 @@
+  - A --quick or -q flag for inline patterns without YAML would make ad-hoc searches frictionless: ob scan . -q "font-bold|font-medium"
+  - Could be the best of both worlds
