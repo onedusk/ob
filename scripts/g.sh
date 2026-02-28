@@ -43,6 +43,3 @@ if [[ $do_release -eq 1 ]]; then
   make release
   exit 0
 fi
-
-# Default: just build for the current platform
-make build
