@@ -74,3 +74,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Help message quote escaping for proper display
 
 ---
+
+## [Unreleased]
+
+### Added
+
+- **Inline scan patterns:** `ob scan -e '<regex>'` (`--regex`, repeatable) scans without a YAML patterns file. When any `-e` is given, the patterns file is skipped entirely and patterns are auto-named `inline_1`, `inline_2`, ...
+
+### Changed
+
+- Corrected `scan` help text to state it uses `./patterns.yaml` instead of the misleading "default patterns" wording, and added `-e` usage examples.
+
+### Fixed
+
+- `scan` now names the missing patterns file in its error (with a hint to use `-e` or `-p`) instead of emitting a bare `Io(NotFound)`.
+
+---
