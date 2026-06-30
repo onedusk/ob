@@ -1,4 +1,4 @@
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use serde::Deserialize;
 use std::env;
 use std::fs::File;
@@ -158,7 +158,13 @@ impl ConfigLoader {
     ///
     /// * `path` - The path to the YAML configuration file.
     pub fn load_scan_config(path: &Path) -> Result<ScanConfig> {
-        let file = File::open(path)?;
+        let file = File::open(path).map_err(|e| {
+            Error::Config(format!(
+                "could not open patterns file '{}': {} (pass -e '<regex>' to scan without a file, or -p <file> to use a different one)",
+                path.display(),
+                e
+            ))
+        })?;
         Ok(serde_yaml::from_reader(file)?)
     }
 

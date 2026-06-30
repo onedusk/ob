@@ -265,6 +265,7 @@ impl Scanner {
 /// 4. Writing the results.
 pub fn run_scan(
     patterns_file: PathBuf,
+    inline_patterns: Vec<String>,
     output: Option<PathBuf>,
     extensions: Vec<String>,
     inputs: Vec<PathBuf>,
@@ -278,12 +279,23 @@ pub fn run_scan(
 ) -> Result<()> {
     let exts = normalize_extensions(extensions);
 
-    // Load patterns
-    let cfg = ConfigLoader::load_scan_config(&patterns_file)?;
-    let patterns_hash = compute_patterns_hash(&cfg.patterns);
+    // Load patterns: inline -e flags take precedence over the patterns file.
+    let patterns: Vec<Pattern> = if !inline_patterns.is_empty() {
+        inline_patterns
+            .into_iter()
+            .enumerate()
+            .map(|(i, pattern)| Pattern {
+                name: format!("inline_{}", i + 1),
+                pattern,
+            })
+            .collect()
+    } else {
+        ConfigLoader::load_scan_config(&patterns_file)?.patterns
+    };
+    let patterns_hash = compute_patterns_hash(&patterns);
 
     // Create scanner
-    let scanner = Arc::new(Scanner::new(cfg.patterns)?);
+    let scanner = Arc::new(Scanner::new(patterns)?);
 
     let output_format = OutputFormat::from(format.as_str());
 

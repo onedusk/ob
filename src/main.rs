@@ -35,6 +35,7 @@ fn main() -> Result<()> {
                 eprintln!("Error: Missing required argument: <INPUTS>\n");
                 eprintln!("USAGE EXAMPLES:");
                 eprintln!("  ob scan .                              # Scan current directory");
+                eprintln!("  ob scan -e 'TODO|FIXME' .              # Inline regex, no YAML file");
                 eprintln!("  ob scan src/ lib/                      # Scan multiple directories");
                 eprintln!("  ob scan -p patterns.yaml .             # Use custom patterns");
                 eprintln!("  ob scan -x js,ts -o results.txt .      # Scan only JS/TS files");
@@ -85,6 +86,7 @@ fn main() -> Result<()> {
     match args.command {
         Commands::Scan {
             patterns,
+            regex,
             output,
             extensions,
             workers,
@@ -97,6 +99,7 @@ fn main() -> Result<()> {
             inputs,
         } => scanner::run_scan(
             patterns,
+            regex,
             output,
             extensions,
             inputs,

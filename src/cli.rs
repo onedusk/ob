@@ -21,7 +21,8 @@ Designed for large codebases with:
   • Smart empty line cleanup
 
 QUICK EXAMPLES:
-  ob scan .                           # Scan current directory with default patterns
+  ob scan .                           # Scan current dir using ./patterns.yaml
+  ob scan -e 'TODO|FIXME' .           # Scan with an inline regex (no YAML file)
   ob replace -d . --preset CleanDebug # Remove all debug code
   ob rename -d . -p 'test_(.*)' -r 'spec_$1'  # Rename test files
   ob undo -d .                        # Restore from backups
@@ -58,7 +59,8 @@ pub enum Commands {
     /// Scan files for patterns (security issues, TODOs, code smells, etc.)
     ///
     /// EXAMPLES:
-    ///   ob scan .                              # Scan current dir with default patterns
+    ///   ob scan .                              # Scan current dir using ./patterns.yaml
+    ///   ob scan -e 'TODO|FIXME' .              # Inline regex, no YAML file needed
     ///   ob scan -p security.yaml src/ lib/     # Scan for security issues
     ///   ob scan -x js,ts -o results.txt .      # Scan only JS/TS files
     ///   ob scan -f json . | jq '.matches[]'    # Output as JSON
@@ -73,6 +75,11 @@ pub enum Commands {
         /// Path to the YAML file defining the scan patterns.
         #[arg(short, long, default_value = "patterns.yaml")]
         patterns: PathBuf,
+
+        /// An inline regex to scan for instead of a patterns file. Repeatable (-e A -e B).
+        /// When provided, the patterns file is ignored.
+        #[arg(short = 'e', long = "regex")]
+        regex: Vec<String>,
 
         /// Path to the output file. If omitted, results are written to standard output.
         #[arg(short, long)]
