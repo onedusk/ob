@@ -7,42 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.0] - 2025-09-23
-
-### Initial Release
-
-- SIMD-powered regex pattern matching
-- Parallel file processing with Rayon
-- Multiple operation modes:
-  - `scan`: Find patterns across codebases
-  - `replace`: Replace/remove patterns with backup support
-  - `undo`: Restore files from backups
-  - `clean-backups`: Remove backup files
-  - `rename`: Batch rename files using regex
-- YAML configuration for patterns and replacements
-- Gitignore-aware file traversal
-- Automatic backup creation before modifications
-- Smart empty line cleanup after block removal
-- Support for multi-line block removal
-- Incremental scanning with cache support
-- Multiple output formats (text, JSON, CSV, SARIF, HTML)
-- Dry-run mode for previewing changes
-- Built-in presets for common tasks:
-  - RemoveCopyright
-  - CleanDebug
-  - RemoveTodos
-  - TrimWhitespace
-  - RemoveEmptyComments
-  - TabsToSpaces
-  - SpacesToTabs
-
----
-
-## [0.1.2] - 2025-09-25
+## [Unreleased]
 
 ### Added
 
-- **File Renaming:** Added a new `rename` command to atomically rename files at scale using regex patterns.
+- **Inline scan patterns:** `ob scan -e '<regex>'` (`--regex`, repeatable) scans without a YAML patterns file. When any `-e` is given, the patterns file is skipped entirely and patterns are auto-named `inline_1`, `inline_2`, ...
+
+### Changed
+
+- Corrected `scan` help text to state it uses `./patterns.yaml` instead of the misleading "default patterns" wording, and added `-e` usage examples.
+
+### Fixed
+
+- `scan` now names the missing patterns file in its error (with a hint to use `-e` or `-p`) instead of emitting a bare `Io(NotFound)`.
 
 ---
 
@@ -75,18 +52,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.1.2] - 2025-09-25
 
 ### Added
 
-- **Inline scan patterns:** `ob scan -e '<regex>'` (`--regex`, repeatable) scans without a YAML patterns file. When any `-e` is given, the patterns file is skipped entirely and patterns are auto-named `inline_1`, `inline_2`, ...
+- **File Renaming:** Added a new `rename` command to atomically rename files at scale using regex patterns.
 
-### Changed
+---
 
-- Corrected `scan` help text to state it uses `./patterns.yaml` instead of the misleading "default patterns" wording, and added `-e` usage examples.
+## [0.1.0] - 2025-09-23
 
-### Fixed
+### Initial Release
 
-- `scan` now names the missing patterns file in its error (with a hint to use `-e` or `-p`) instead of emitting a bare `Io(NotFound)`.
+- SIMD-powered regex pattern matching
+- Parallel file processing with Rayon
+- Multiple operation modes:
+  - `scan`: Find patterns across codebases
+  - `replace`: Replace/remove patterns with backup support
+  - `undo`: Restore files from backups
+  - `clean-backups`: Remove backup files
+  - `rename`: Batch rename files using regex
+- YAML configuration for patterns and replacements
+- Gitignore-aware file traversal
+- Automatic backup creation before modifications
+- Smart empty line cleanup after block removal
+- Support for multi-line block removal
+- Incremental scanning with cache support
+- Multiple output formats (text, JSON, CSV, SARIF, HTML)
+- Dry-run mode for previewing changes
+- Built-in presets for common tasks:
+  - RemoveCopyright
+  - CleanDebug
+  - RemoveTodos
+  - TrimWhitespace
+  - RemoveEmptyComments
+  - TabsToSpaces
+  - SpacesToTabs
 
 ---

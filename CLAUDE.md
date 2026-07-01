@@ -2,11 +2,6 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Documentation Context
-- Claude Code Documentation: @docs/claude-code/doc-index.md
-- Implementation Patterns: @.claude/context/implementation-patterns.md
-- Current Development Focus: @.claude/context/current-focus.md
-
 ## Project Overview
 
 Uber Scanner is a high-performance pattern scanning and replacement tool built entirely in Rust. It combines ultra-fast regex-based file scanning with powerful pattern replacement capabilities, designed with reliability, speed, and efficiency as top priorities.
@@ -170,7 +165,7 @@ exclude: [node_modules, target]  # Optional
 - `Cargo.toml`: Dependencies and project configuration
 - `patterns.yaml`: Default scan patterns
 - `replace_config.yaml`: Example replacement configuration
-- `patterns/*.yaml`: Additional pattern collections
+- `config/*.yaml`: Additional pattern collections
 
 ## Development Workflow
 
@@ -270,21 +265,3 @@ The `clean-backups` command provides:
 - Total size calculation of backup files
 - Safe removal with error handling
 - Detailed reporting of removed files
-
----
-
-## PROHIBITED
-
-**All of the following are prohibited in project code**:
-
-- mocks where implementations are supposed to be implemented
-- simulations where logic is supposed to be
-- placeholders where project code should be
-- examples where implementations should be
-- scripts to fix large amounts of code || any code that isn't directly approved by the developer
-- Half-assed task execution
-- half-assed planning
-- files created and left in the root of the project
-  - this includes ANY non-critical files in root of project
-- test files in the root of the project
-- un-organized files

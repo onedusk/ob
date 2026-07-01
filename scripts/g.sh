@@ -40,6 +40,7 @@ git push -u origin "$branch"
 
 # --- Build / Release ---
 if [[ $do_release -eq 1 ]]; then
-  make release
+  cargo build --release
+  cargo install --path .
   exit 0
 fi
