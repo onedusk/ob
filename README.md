@@ -61,7 +61,7 @@ ob scan -p patterns.yaml -x js,ts,py /path/to/scan
 
 ```bash
 # Replace using YAML configuration
-ob replace --dir /path --config replace_config.yaml --dry-run
+ob replace --dir /path --config file_name.yaml --dry-run
 
 # Preview changes without applying (dry-run)
 ob replace --dir /path --config replace_config.yaml --dry-run
@@ -93,7 +93,7 @@ ob undo --dir /path
 ob undo --dir /path --keep-backups
 
 # Remove backup files after verification
-ob clean-backups --dir /Users/macadelic/dusk-labs/shared/packages/jot
+ob clean-backups --dir /path
 
 # Preview backup files before removal (shows total size)
 ob clean-backups --dir /path --dry-run
