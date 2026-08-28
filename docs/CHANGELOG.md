@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `replace` now gives explicitly-passed `-x`/`--ext` and `-e`/`--exclude` CLI flags precedence over the config file's `extensions`/`exclude` lists. Previously the config values silently overrode the CLI flags — inverted relative to the usual CLI > config convention — so e.g. `-x py` with a config declaring `extensions: [js]` still processed only `.js` files. Config values now apply only when the corresponding flag is not given.
 - `scan` now names the missing patterns file in its error (with a hint to use `-e` or `-p`) instead of emitting a bare `Io(NotFound)`.
 - `undo` and `clean-backups` now find `.bak` files that are gitignored (e.g. `*.bak` in the target repo's `.gitignore`) or hidden; backup discovery previously applied the standard gitignore/hidden filters and reported "Backups found: 0" while backups existed.
 - `replace` no longer overwrites an existing `<file>.bak` on repeated runs; the oldest backup is preserved because it holds the pre-oober original, so `undo` restores the true original instead of an intermediate state. Docs claiming timestamped backups were corrected (backups never had timestamps).

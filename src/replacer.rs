@@ -315,24 +315,23 @@ pub fn run_replace(
         return Err("Specify --preset, --config, or --pattern".into());
     };
 
-    // Normalize extensions
-    let exts: Vec<String> = config
-        .extensions
-        .as_ref()
-        .map(|e| {
-            e.iter()
-                .map(|s| s.trim().trim_start_matches('.').to_lowercase())
-                .collect()
-        })
-        .unwrap_or_else(|| {
-            extensions
-                .iter()
-                .map(|s| s.trim().trim_start_matches('.').to_lowercase())
-                .collect()
-        });
+    // Normalize extensions: explicit CLI flags win, config values apply otherwise
+    let exts_source: &[String] = if !extensions.is_empty() {
+        &extensions
+    } else {
+        config.extensions.as_deref().unwrap_or_default()
+    };
+    let exts: Vec<String> = exts_source
+        .iter()
+        .map(|s| s.trim().trim_start_matches('.').to_lowercase())
+        .collect();
 
-    // Get exclude directories from config or command line
-    let exclude_dirs = config.exclude.clone().unwrap_or_else(|| exclude.clone());
+    // Exclude directories: explicit CLI flags win, config values apply otherwise
+    let exclude_dirs = if !exclude.is_empty() {
+        exclude.clone()
+    } else {
+        config.exclude.clone().unwrap_or_default()
+    };
 
     // Create replacer
     let replacer = Arc::new(Replacer::new(config)?);
@@ -682,6 +681,90 @@ mod tests {
             "no file may be touched when the config is rejected"
         );
         assert!(!dir.join("t.txt.bak").exists());
+    }
+
+    #[test]
+    fn test_cli_extensions_override_config_extensions() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.js"), "AAA\n").unwrap();
+        fs::write(dir.join("b.py"), "AAA\n").unwrap();
+
+        let config_path = dir.join("config.yaml");
+        fs::write(
+            &config_path,
+            "patterns:\n  - \"AAA\"\nreplacements:\n  - \"BBB\"\nextensions: [js]\n",
+        )
+        .unwrap();
+
+        run_replace(
+            None,
+            Some(config_path),
+            None,
+            None,
+            dir.to_path_buf(),
+            vec!["py".to_string()], // explicit -x must win over the config's [js]
+            vec![],
+            true,  // no_backup
+            false, // dry_run
+            false, // verbose
+            Some(1),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("a.js")).unwrap(),
+            "AAA\n",
+            "config extensions must not override explicit CLI -x"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("b.py")).unwrap(),
+            "BBB\n",
+            "CLI-selected extension must be processed"
+        );
+    }
+
+    #[test]
+    fn test_cli_exclude_overrides_config_exclude() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::create_dir(dir.join("vendor")).unwrap();
+        fs::create_dir(dir.join("generated")).unwrap();
+        fs::write(dir.join("vendor").join("a.txt"), "AAA\n").unwrap();
+        fs::write(dir.join("generated").join("b.txt"), "AAA\n").unwrap();
+
+        let config_path = dir.join("config.yaml");
+        fs::write(
+            &config_path,
+            "patterns:\n  - \"AAA\"\nreplacements:\n  - \"BBB\"\nexclude: [vendor]\n",
+        )
+        .unwrap();
+
+        run_replace(
+            None,
+            Some(config_path),
+            None,
+            None,
+            dir.to_path_buf(),
+            vec!["txt".to_string()],
+            vec!["generated".to_string()], // explicit --exclude must win over the config's [vendor]
+            true,  // no_backup
+            false, // dry_run
+            false, // verbose
+            Some(1),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("vendor").join("a.txt")).unwrap(),
+            "BBB\n",
+            "config exclude must not apply when CLI --exclude is given"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("generated").join("b.txt")).unwrap(),
+            "AAA\n",
+            "CLI-excluded directory must be skipped"
+        );
     }
 
     fn single_pattern_replacer(pattern: &str, replacement: &str) -> Replacer {
