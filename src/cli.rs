@@ -117,7 +117,13 @@ pub enum Commands {
         content_hash: bool,
 
         /// The output format for the scan results.
-        #[arg(short = 'f', long = "format", value_enum, default_value = "text")]
+        #[arg(
+            short = 'f',
+            long = "format",
+            value_enum,
+            ignore_case = true,
+            default_value = "text"
+        )]
         format: OutputFormat,
 
         /// Include a summary of scan statistics in the output.
@@ -313,6 +319,18 @@ mod tests {
             assert!(
                 Args::try_parse_from(["ob", "scan", "-f", fmt, "."]).is_ok(),
                 "format {fmt} must parse"
+            );
+        }
+    }
+
+    #[test]
+    fn test_scan_format_is_case_insensitive() {
+        // "-f JSON" worked before --format became a clap value_enum; the
+        // value_enum must not make it a usage error.
+        for fmt in ["JSON", "Json", "TEXT", "CSV", "SARIF", "Html"] {
+            assert!(
+                Args::try_parse_from(["ob", "scan", "-f", fmt, "."]).is_ok(),
+                "format {fmt} must parse case-insensitively"
             );
         }
     }
