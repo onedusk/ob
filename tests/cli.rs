@@ -387,6 +387,31 @@ fn trim_whitespace_preset_strips_interior_trailing_whitespace() {
 }
 
 #[test]
+fn replace_echoes_kebab_case_preset_name() {
+    let temp = TempDir::new().unwrap();
+    fs::write(temp.path().join("a.js"), "let x = 1;\n").unwrap();
+
+    // The confirmation line must echo the name the CLI accepts
+    // (`remove-todos`), not the Debug form (`RemoveTodos`), which clap
+    // rejects if a user copies it back into --preset.
+    let assert = ob()
+        .arg("replace")
+        .arg("-d")
+        .arg(temp.path())
+        .arg("--preset")
+        .arg("remove-todos")
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("Using preset: remove-todos"));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        !stdout.contains("RemoveTodos"),
+        "PascalCase preset name must not surface: {stdout}"
+    );
+}
+
+#[test]
 fn list_presets_runs_without_dir_and_lists_every_preset() {
     let assert = ob().arg("replace").arg("--list-presets").assert().success();
 

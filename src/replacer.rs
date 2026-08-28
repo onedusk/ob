@@ -346,8 +346,13 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
 
     // Load or create config
     let config = if let Some(preset_type) = preset {
-        // Use built-in preset
-        println!("Using preset: {preset_type:?}");
+        // Use built-in preset; echo the kebab-case name the CLI accepts, not
+        // the Debug form (`RemoveTodos`), which clap rejects if pasted back.
+        use clap::ValueEnum;
+        let preset_name = preset_type
+            .to_possible_value()
+            .expect("no Preset variant is #[value(skip)]");
+        println!("Using preset: {}", preset_name.get_name());
         load_preset(&preset_type)
     } else if let Some(cfg_path) = config_file {
         // Use config file
