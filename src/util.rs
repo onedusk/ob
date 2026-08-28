@@ -1,5 +1,6 @@
 //! Small helpers shared across the scan, replace, and rename paths.
 
+use crate::errors::Result;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -37,6 +38,19 @@ pub fn normalize_extensions(extensions: &[String]) -> HashSet<String> {
         .collect()
 }
 
+/// Normalizes user-supplied extensions like [`normalize_extensions`], but
+/// rejects a filter whose entries were provided and all normalize away
+/// (e.g. `-x .`): an empty set means "process every file", so silently
+/// dropping every entry would flip an explicit filter into processing
+/// everything.
+pub fn require_valid_extensions(extensions: &[String]) -> Result<HashSet<String>> {
+    let normalized = normalize_extensions(extensions);
+    if normalized.is_empty() && !extensions.is_empty() {
+        return Err("no valid extensions in -x/--ext".into());
+    }
+    Ok(normalized)
+}
+
 /// Resolves the worker-thread count: an explicit request wins, otherwise the
 /// number of logical CPU cores (falling back to 1 when that is unavailable).
 pub fn resolve_workers(workers: Option<usize>) -> usize {
@@ -60,6 +74,28 @@ mod tests {
     fn test_normalize_extensions_trims_dots_case_and_empties() {
         let exts = normalize_extensions(&strings(&[" .JS ", "py", ".Rs", "", " ", "."]));
         assert_eq!(exts, HashSet::from(["js".into(), "py".into(), "rs".into()]));
+    }
+
+    #[test]
+    fn test_require_valid_extensions_rejects_all_invalid_filters() {
+        // Entries provided but none survive normalization: "-x ." must be a
+        // config error, not an empty set (which means "process every file").
+        for filter in [&["."][..], &["", " "], &[".", ""]] {
+            let err = require_valid_extensions(&strings(filter)).unwrap_err();
+            assert!(
+                err.to_string().contains("no valid extensions"),
+                "filter {filter:?} must be rejected: {err}"
+            );
+        }
+
+        // No entries at all still means "no filter".
+        assert_eq!(require_valid_extensions(&[]).unwrap(), HashSet::new());
+
+        // A normal filter still normalizes as before.
+        assert_eq!(
+            require_valid_extensions(&strings(&["py", "."])).unwrap(),
+            HashSet::from(["py".into()])
+        );
     }
 
     #[test]

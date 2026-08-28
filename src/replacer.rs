@@ -2,7 +2,7 @@ use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
 use crate::patterns::load_preset;
-use crate::util::{is_backup_file, normalize_extensions, resolve_workers, should_process_file};
+use crate::util::{is_backup_file, require_valid_extensions, resolve_workers, should_process_file};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::{Captures, Regex};
@@ -396,7 +396,7 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
     } else {
         config.extensions.as_deref().unwrap_or_default()
     };
-    let exts = normalize_extensions(exts_source);
+    let exts = require_valid_extensions(exts_source)?;
 
     // Exclude directories: explicit CLI flags win, config values apply otherwise
     let exclude_dirs = if !exclude.is_empty() {
@@ -889,6 +889,39 @@ mod tests {
             "no file may be touched when the config is rejected"
         );
         assert!(!dir.join("t.txt.bak").exists());
+    }
+
+    #[test]
+    fn test_all_invalid_extensions_filter_is_rejected_and_touches_nothing() {
+        // Verified failure: `-x .` normalized to an empty set, and an empty
+        // set means "process every file" — so a filter meant to select
+        // nothing rewrote extensionless and .py files alike.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.py"), "AAA\n").unwrap();
+        fs::write(dir.join("noext"), "AAA\n").unwrap();
+
+        let result = run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("AAA".into()),
+            replacement: Some("BBB".into()),
+            dir: dir.to_path_buf(),
+            extensions: vec![".".to_string()],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        });
+
+        let err = result.expect_err("-x . must be rejected");
+        assert!(
+            err.to_string().contains("no valid extensions"),
+            "error must name the empty filter: {err}"
+        );
+        assert_eq!(fs::read_to_string(dir.join("a.py")).unwrap(), "AAA\n");
+        assert_eq!(fs::read_to_string(dir.join("noext")).unwrap(), "AAA\n");
     }
 
     #[test]

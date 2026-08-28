@@ -327,6 +327,67 @@ fn mismatched_patterns_replacements_config_is_rejected_and_file_untouched() {
 }
 
 #[test]
+fn all_invalid_extension_filter_is_rejected_for_replace_and_scan() {
+    // Audit repro: `-x .` normalizes to an empty extension set, and an empty
+    // set means "process every file" — so `ob replace -d . -x . -p foo -r bar`
+    // rewrote extensionless and .py files alike. An explicit filter whose
+    // entries all normalize away must be a hard error for both subcommands.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("a.py"), "foo line\n").unwrap();
+    fs::write(work.join("noext"), "foo line\n").unwrap();
+
+    ob().arg("replace")
+        .arg("-d")
+        .arg(&work)
+        .arg("-x")
+        .arg(".")
+        .arg("-p")
+        .arg("foo")
+        .arg("-r")
+        .arg("bar")
+        .assert()
+        .failure()
+        .stderr(contains("no valid extensions"));
+
+    assert_eq!(fs::read_to_string(work.join("a.py")).unwrap(), "foo line\n");
+    assert_eq!(
+        fs::read_to_string(work.join("noext")).unwrap(),
+        "foo line\n"
+    );
+
+    ob().arg("scan")
+        .arg("-e")
+        .arg("foo")
+        .arg("-x")
+        .arg(".")
+        .arg(&work)
+        .assert()
+        .failure()
+        .stderr(contains("no valid extensions"));
+
+    // A normal filter still works and stays scoped to its extension.
+    ob().arg("replace")
+        .arg("-d")
+        .arg(&work)
+        .arg("-x")
+        .arg("py")
+        .arg("-p")
+        .arg("foo")
+        .arg("-r")
+        .arg("bar")
+        .arg("--no-backup")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(work.join("a.py")).unwrap(), "bar line\n");
+    assert_eq!(
+        fs::read_to_string(work.join("noext")).unwrap(),
+        "foo line\n"
+    );
+}
+
+#[test]
 fn crlf_preserved_through_null_replacement_line_deletion() {
     let temp = TempDir::new().unwrap();
     let work = temp.path().join("work");

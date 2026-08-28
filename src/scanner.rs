@@ -3,7 +3,9 @@ use crate::errors::{Error, Result};
 use crate::fingerprint::{FileFingerprint, Fingerprinter};
 use crate::output_formatter::{OutputFormat, OutputFormatter};
 use crate::state_manager::{CachedMatch, FileState, ScanState, StateManager};
-use crate::util::{normalize_extensions, resolve_workers, should_process_file};
+use crate::util::{
+    normalize_extensions, require_valid_extensions, resolve_workers, should_process_file,
+};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::RegexSet;
@@ -310,7 +312,7 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
         return Err("--summary is only supported with --format text".into());
     }
 
-    let exts = normalize_extensions(&extensions);
+    let exts = require_valid_extensions(&extensions)?;
 
     // Load patterns: inline -e flags take precedence over the patterns file.
     let patterns: Vec<Pattern> = if !inline_patterns.is_empty() {
@@ -745,6 +747,42 @@ mod tests {
 
         // --summary with the text format must remain valid.
         run_scan(options(OutputFormat::Text)).unwrap();
+    }
+
+    #[test]
+    fn test_all_invalid_extensions_filter_is_rejected() {
+        // Verified failure: `-x .` normalized to an empty set, and an empty
+        // set means "scan every file" — an explicit filter must never widen
+        // the scan to everything.
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("a.py"), "TODO\n").unwrap();
+
+        let options = |extensions| ScanOptions {
+            patterns_file: PathBuf::from("patterns.yaml"),
+            inline_patterns: vec!["TODO".to_string()],
+            output: None,
+            extensions,
+            inputs: vec![temp_dir.path().to_path_buf()],
+            workers: Some(1),
+            incremental: false,
+            force_full: false,
+            clear_cache: false,
+            content_hash: false,
+            format: OutputFormat::Text,
+            include_summary: false,
+            hidden: false,
+            no_ignore: false,
+        };
+
+        let err = run_scan(options(vec![".".to_string()]))
+            .expect_err("-x . must be rejected, not scan everything");
+        assert!(
+            err.to_string().contains("no valid extensions"),
+            "error must name the empty filter: {err}"
+        );
+
+        // A normal filter still works.
+        run_scan(options(vec!["py".to_string()])).unwrap();
     }
 
     #[cfg(unix)]
