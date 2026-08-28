@@ -92,6 +92,39 @@ fn scan_finds_pattern_json_format() {
 }
 
 #[test]
+fn scan_reports_resolved_patterns_file_on_stderr_not_in_results() {
+    let temp = TempDir::new().unwrap();
+    let scanme = temp.path().join("scanme");
+    fs::create_dir(&scanme).unwrap();
+    fs::write(scanme.join("src.txt"), "hello TODO world\n").unwrap();
+    let patterns = temp.path().join("patterns.yaml");
+    fs::write(
+        &patterns,
+        "patterns:\n  - name: todo\n    pattern: 'TODO'\n",
+    )
+    .unwrap();
+
+    let assert = ob()
+        .arg("scan")
+        .arg("-p")
+        .arg(&patterns)
+        .arg(&scanme)
+        .assert()
+        .success()
+        .stderr(contains(patterns.to_str().unwrap()));
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains("hello TODO world"),
+        "results must be on stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains(patterns.to_str().unwrap()),
+        "the resolved config path must not pollute the results stream: {stdout}"
+    );
+}
+
+#[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     // clap usage errors exit with code 2; an unknown format must not silently

@@ -56,92 +56,59 @@ impl ConfigLoader {
     /// Finds the configuration file by searching in a prioritized list of locations.
     ///
     /// The search order is:
-    /// 1. The absolute path provided in `config_path`, if it exists.
-    /// 2. A path relative to the current directory.
-    /// 3. A path relative to the `working_dir`.
-    /// 4. Inside the `~/.uber_scanner` directory.
-    /// 5. Next to the executable.
-    /// 6. In the parent directory of the executable (to handle `target/release` builds).
-    /// 7. In the grandparent directory of the executable.
+    /// 1. The path as given (absolute, or relative to the current directory).
+    /// 2. Relative to `working_dir`.
+    /// 3. Inside the user config directory: `$XDG_CONFIG_HOME/oober`, or
+    ///    `~/.config/oober` when `XDG_CONFIG_HOME` is unset.
+    ///
+    /// An absolute path is only tried as given. The executable's directory and
+    /// its ancestors are deliberately not searched: a config file planted next
+    /// to the binary (or left over in `target/`) must never be picked up
+    /// silently.
     ///
     /// # Arguments
     ///
     /// * `config_path` - The path to the configuration file, which can be absolute or relative.
-    /// * `working_dir` - The directory where the command is being executed.
+    /// * `working_dir` - The directory the command operates on.
     ///
     /// # Returns
     ///
-    /// Returns a `Result` with the `PathBuf` to the found config file, or an error if not found.
+    /// Returns a `Result` with the `PathBuf` to the found config file, or an error
+    /// listing the searched locations if not found.
     pub fn find_config(config_path: &Path, working_dir: &Path) -> Result<PathBuf> {
-        // If the path is absolute and exists, use it
-        if config_path.is_absolute() && config_path.exists() {
-            return Ok(config_path.to_path_buf());
-        }
+        Self::find_config_in(config_path, working_dir, Self::user_config_dir().as_deref())
+    }
 
-        // Try relative to current directory
+    /// `find_config` with the user config directory injected, so tests can
+    /// exercise the search order without touching the environment.
+    fn find_config_in(
+        config_path: &Path,
+        working_dir: &Path,
+        user_config_dir: Option<&Path>,
+    ) -> Result<PathBuf> {
+        // The path as given: absolute, or relative to the current directory.
         if config_path.exists() {
             return Ok(config_path.to_path_buf());
         }
 
-        // Try relative to the working directory
-        let in_working_dir = working_dir.join(config_path);
-        if in_working_dir.exists() {
-            return Ok(in_working_dir);
-        }
+        let mut tried_locations = vec![config_path.display().to_string()];
 
-        // Try in .uber_scanner config directory
-        if let Some(home) = env::var_os("HOME") {
-            let home_config = PathBuf::from(home).join(".uber_scanner").join(config_path);
-            if home_config.exists() {
-                return Ok(home_config);
+        // An absolute path either exists or it doesn't; no fallback searching.
+        if !config_path.is_absolute() {
+            // Relative to the working directory.
+            let in_working_dir = working_dir.join(config_path);
+            if in_working_dir.exists() {
+                return Ok(in_working_dir);
             }
-        }
+            tried_locations.push(in_working_dir.display().to_string());
 
-        // Try in the executable's directory
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                let exe_config = exe_dir.join(config_path);
-                if exe_config.exists() {
-                    return Ok(exe_config);
+            // The user config directory ($XDG_CONFIG_HOME/oober or ~/.config/oober).
+            if let Some(config_dir) = user_config_dir {
+                let user_config = config_dir.join(config_path);
+                if user_config.exists() {
+                    return Ok(user_config);
                 }
-
-                // Also check parent directory (in case we're in target/release)
-                if let Some(parent) = exe_dir.parent() {
-                    let parent_config = parent.join(config_path);
-                    if parent_config.exists() {
-                        return Ok(parent_config);
-                    }
-
-                    // Check one more level up (for target/release structure)
-                    if let Some(grandparent) = parent.parent() {
-                        let grandparent_config = grandparent.join(config_path);
-                        if grandparent_config.exists() {
-                            return Ok(grandparent_config);
-                        }
-                    }
-                }
-            }
-        }
-
-        // If we still haven't found it, provide a helpful error
-        let mut tried_locations = vec![
-            config_path.display().to_string(),
-            in_working_dir.display().to_string(),
-        ];
-
-        if let Some(home) = env::var_os("HOME") {
-            tried_locations.push(
-                PathBuf::from(home)
-                    .join(".uber_scanner")
-                    .join(config_path)
-                    .display()
-                    .to_string(),
-            );
-        }
-
-        if let Ok(exe_path) = env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                tried_locations.push(exe_dir.join(config_path).display().to_string());
+                tried_locations.push(user_config.display().to_string());
             }
         }
 
@@ -151,6 +118,17 @@ impl ConfigLoader {
             tried_locations.join("\n  - ")
         )
         .into())
+    }
+
+    /// The per-user config directory: `$XDG_CONFIG_HOME/oober`, falling back
+    /// to `~/.config/oober`.
+    fn user_config_dir() -> Option<PathBuf> {
+        if let Some(xdg) = env::var_os("XDG_CONFIG_HOME") {
+            if !xdg.is_empty() {
+                return Some(PathBuf::from(xdg).join("oober"));
+            }
+        }
+        env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("oober"))
     }
 
     /// Loads a `ScanConfig` from a YAML file.
@@ -177,5 +155,102 @@ impl ConfigLoader {
     pub fn load_replace_config(path: &Path) -> Result<ReplaceConfig> {
         let file = File::open(path)?;
         Ok(serde_yaml::from_reader(file)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_find_config_uses_path_as_given() {
+        let temp = TempDir::new().unwrap();
+        let cfg = temp.path().join("direct.yaml");
+        fs::write(&cfg, "patterns: []\n").unwrap();
+
+        let found = ConfigLoader::find_config_in(&cfg, temp.path(), None).unwrap();
+        assert_eq!(found, cfg);
+    }
+
+    #[test]
+    fn test_find_config_falls_back_to_working_dir() {
+        let temp = TempDir::new().unwrap();
+        let work = temp.path().join("work");
+        fs::create_dir(&work).unwrap();
+        fs::write(work.join("wd.yaml"), "patterns: []\n").unwrap();
+
+        let found = ConfigLoader::find_config_in(Path::new("wd.yaml"), &work, None).unwrap();
+        assert_eq!(found, work.join("wd.yaml"));
+    }
+
+    #[test]
+    fn test_find_config_falls_back_to_user_config_dir() {
+        let temp = TempDir::new().unwrap();
+        let work = temp.path().join("work");
+        fs::create_dir(&work).unwrap();
+        let user_dir = temp.path().join("xdg").join("oober");
+        fs::create_dir_all(&user_dir).unwrap();
+        fs::write(user_dir.join("user.yaml"), "patterns: []\n").unwrap();
+
+        let found =
+            ConfigLoader::find_config_in(Path::new("user.yaml"), &work, Some(&user_dir)).unwrap();
+        assert_eq!(found, user_dir.join("user.yaml"));
+    }
+
+    #[test]
+    fn test_find_config_error_lists_exactly_the_searched_locations() {
+        let temp = TempDir::new().unwrap();
+        let work = temp.path().join("work");
+        fs::create_dir(&work).unwrap();
+        let user_dir = temp.path().join("xdg").join("oober");
+
+        let err = ConfigLoader::find_config_in(Path::new("missing.yaml"), &work, Some(&user_dir))
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing.yaml"), "{msg}");
+        assert!(
+            msg.contains(work.join("missing.yaml").to_str().unwrap()),
+            "{msg}"
+        );
+        assert!(
+            msg.contains(user_dir.join("missing.yaml").to_str().unwrap()),
+            "{msg}"
+        );
+        assert!(!msg.contains(".uber_scanner"), "{msg}");
+    }
+
+    #[test]
+    fn test_find_config_does_not_search_absolute_paths_elsewhere() {
+        let temp = TempDir::new().unwrap();
+        let user_dir = temp.path().join("xdg").join("oober");
+        fs::create_dir_all(&user_dir).unwrap();
+        fs::write(user_dir.join("abs.yaml"), "patterns: []\n").unwrap();
+
+        // An absolute path that does not exist must not fall back to the
+        // working dir or the user config dir, even if a same-named file exists there.
+        let missing_abs = temp.path().join("abs.yaml");
+        let err =
+            ConfigLoader::find_config_in(&missing_abs, &user_dir, Some(&user_dir)).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_find_config_ignores_executable_directory() {
+        // The pre-audit search chain picked up configs next to the binary
+        // (and in its parent/grandparent, i.e. inside target/). Plant one
+        // there and prove it is no longer found.
+        let exe_dir = env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let name = format!("oober_exe_dir_cfg_{}.yaml", std::process::id());
+        let planted = exe_dir.join(&name);
+        fs::write(&planted, "patterns: []\n").unwrap();
+
+        let temp = TempDir::new().unwrap();
+        let result = ConfigLoader::find_config(Path::new(&name), temp.path());
+        fs::remove_file(&planted).unwrap();
+
+        let err = result.expect_err("a config next to the binary must not be picked up");
+        assert!(err.to_string().contains("not found"));
     }
 }

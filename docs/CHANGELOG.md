@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Config file resolution no longer searches the executable's directory, its parent and grandparent, or `~/.uber_scanner` — a config planted next to the binary (or left over in `target/`) can no longer be picked up silently when the given path has a typo. The search is now: the path as given, then the working directory, then `$XDG_CONFIG_HOME/oober` (default `~/.config/oober`); an absolute path is only tried as given, and the not-found error lists exactly the searched locations. `scan -p` now uses the same resolution (it previously only tried the path as given) and reports the resolved patterns file on stderr, matching `replace`, which already printed its resolved config.
 - The incremental-scan cache (`$XDG_CACHE_HOME/oober/`, default `~/.cache/oober/`) is now owner-only on Unix: the cache directory is created (and, if pre-existing, tightened) to `0700`, and cache files are written with `0600` permissions. The cache stores the matched line contents of previous scans in plaintext — scanning for secrets with `--incremental` copies those matches into it — and was previously world-readable by default. The README now documents the cache location and its contents.
 
 ### Internal
