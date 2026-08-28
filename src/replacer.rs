@@ -63,10 +63,17 @@ impl Replacer {
     ///
     /// This involves compiling all the regex patterns from the configuration.
     pub fn new(config: ReplaceConfig) -> Result<Self> {
-        let mut replacements = config.replacements.clone();
-        if replacements.len() < config.patterns.len() {
-            replacements.resize(config.patterns.len(), None);
+        // A missing replacement must never silently become `null` ("delete the
+        // line after the match") — require the lengths to line up exactly.
+        if config.replacements.len() != config.patterns.len() {
+            return Err(format!(
+                "config has {} patterns but {} replacements; each pattern needs a replacement entry (use an explicit `null` to delete the line after a match)",
+                config.patterns.len(),
+                config.replacements.len()
+            )
+            .into());
         }
+        let replacements = config.replacements.clone();
 
         // Compile regex patterns
         let regex_patterns: Vec<Regex> = config
@@ -580,6 +587,63 @@ mod tests {
         run_clean_backups(dir.to_path_buf(), false).unwrap();
         assert!(!dir.join("b.txt.bak").exists());
         assert!(!dir.join(".env2.bak").exists());
+    }
+
+    #[test]
+    fn test_mismatched_replacements_length_is_config_error() {
+        let err = match Replacer::new(ReplaceConfig {
+            patterns: vec!["AAA".into(), "BBB".into()],
+            replacements: vec![Some("XXX".into())],
+            blocks: vec![],
+            extensions: None,
+            exclude: None,
+        }) {
+            Ok(_) => panic!("mismatched config must be rejected"),
+            Err(e) => e,
+        };
+
+        let msg = err.to_string();
+        assert!(msg.contains("2 patterns"), "message must name pattern count: {msg}");
+        assert!(msg.contains("1 replacements"), "message must name replacement count: {msg}");
+        assert!(msg.contains("null"), "message must say null entries are explicit: {msg}");
+    }
+
+    #[test]
+    fn test_mismatched_config_leaves_files_untouched() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("t.txt");
+        let original = "line AAA\nkeep me\nline BBB\ndo not delete\n";
+        fs::write(&file, original).unwrap();
+
+        let config_path = dir.join("bad_config.yaml");
+        fs::write(
+            &config_path,
+            "patterns:\n  - \"AAA\"\n  - \"BBB\"\nreplacements:\n  - \"XXX\"\n",
+        )
+        .unwrap();
+
+        let result = run_replace(
+            None,
+            Some(config_path),
+            None,
+            None,
+            dir.to_path_buf(),
+            vec![],
+            vec![],
+            false, // no_backup: backups enabled, none should be created
+            false, // dry_run
+            false, // verbose
+            Some(1),
+        );
+
+        assert!(result.is_err(), "mismatched config must be a hard error");
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            original,
+            "no file may be touched when the config is rejected"
+        );
+        assert!(!dir.join("t.txt.bak").exists());
     }
 
     fn single_pattern_replacer(pattern: &str, replacement: &str) -> Replacer {
