@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Uber Scanner is a high-performance pattern scanning and replacement tool built entirely in Rust. It combines ultra-fast regex-based file scanning with powerful pattern replacement capabilities, designed with reliability, speed, and efficiency as top priorities.
+oober (aliased `ob`) is a high-performance pattern scanning and replacement tool built entirely in Rust. It combines ultra-fast regex-based file scanning with powerful pattern replacement capabilities, designed with reliability, speed, and efficiency as top priorities.
 
 Key features:
 1. **Scan Mode**: Find patterns across codebases using regex

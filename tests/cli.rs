@@ -137,6 +137,32 @@ fn unknown_scan_format_is_rejected_at_parse_time() {
         .code(2);
 }
 
+#[test]
+fn workers_env_var_is_oober_workers() {
+    let temp = TempDir::new().unwrap();
+    fs::write(temp.path().join("t.txt"), "TODO\n").unwrap();
+
+    // The renamed variable is actually read: an invalid value must fail at
+    // parse time (clap usage errors exit with code 2).
+    ob().env("OOBER_WORKERS", "not-a-number")
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg(temp.path())
+        .assert()
+        .code(2);
+
+    // The old UBER_SCANNER_WORKERS name is no longer consulted.
+    ob().env_remove("OOBER_WORKERS")
+        .env("UBER_SCANNER_WORKERS", "not-a-number")
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg(temp.path())
+        .assert()
+        .success();
+}
+
 // ---------------------------------------------------------------------------
 // replace / undo
 // ---------------------------------------------------------------------------

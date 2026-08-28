@@ -97,7 +97,7 @@ pub enum Commands {
         extensions: Vec<String>,
 
         /// The number of parallel worker threads to use. Defaults to the number of logical CPU cores.
-        #[arg(short = 'w', long = "workers", env = "UBER_SCANNER_WORKERS")]
+        #[arg(short = 'w', long = "workers", env = "OOBER_WORKERS")]
         workers: Option<usize>,
 
         /// Enable incremental scanning. Only changed files will be re-scanned.
