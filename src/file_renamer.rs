@@ -1,4 +1,5 @@
 use crate::errors::{Error, Result};
+use crate::util::resolve_workers;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::Regex;
@@ -50,11 +51,7 @@ pub fn run_rename(
     let log_changes = verbose || dry_run;
 
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(workers.unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1)
-        }))
+        .num_threads(resolve_workers(workers))
         .build()?;
 
     pool.install(|| {

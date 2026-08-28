@@ -2,6 +2,7 @@ use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
 use crate::patterns::PatternManager;
+use crate::util::{normalize_extensions, resolve_workers, should_process_file};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::{Captures, Regex};
@@ -355,10 +356,7 @@ pub fn run_replace(
     } else {
         config.extensions.as_deref().unwrap_or_default()
     };
-    let exts: Vec<String> = exts_source
-        .iter()
-        .map(|s| s.trim().trim_start_matches('.').to_lowercase())
-        .collect();
+    let exts = normalize_extensions(exts_source);
 
     // Exclude directories: explicit CLI flags win, config values apply otherwise
     let exclude_dirs = if !exclude.is_empty() {
@@ -397,11 +395,7 @@ pub fn run_replace(
 
     // Process files in parallel
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(workers.unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1)
-        }))
+        .num_threads(resolve_workers(workers))
         .build()?;
 
     let options = ProcessOptions {
@@ -528,18 +522,6 @@ impl Clone for ProcessOptions {
             dry_run: self.dry_run,
         }
     }
-}
-
-/// Determines if a file should be processed based on its extension.
-fn should_process_file(path: &Path, extensions: &[String]) -> bool {
-    if extensions.is_empty() {
-        return true;
-    }
-
-    path.extension()
-        .and_then(|os| os.to_str())
-        .map(|s| extensions.contains(&s.to_lowercase()))
-        .unwrap_or(false)
 }
 
 /// Returns the line ending used by `content`: `"\r\n"` if any CRLF ending is

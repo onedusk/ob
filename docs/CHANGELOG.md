@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added a tuned `[profile.release]` (`lto = true`, `codegen-units = 1`, `strip = true`) for a faster, smaller release binary.
 - Removed unused dependencies `anyhow`, `async-trait`, `futures`, and `walkdir` (along with the never-constructed `Error::WalkDir` variant), cutting clean-build and link time.
+- Consolidated duplicated helpers into a shared `util` module: `should_process_file` (the replace path now uses the scanner's O(1) `HashSet` lookup and gains its extension normalization — trim, leading-dot strip, lowercase, empty entries dropped), `normalize_extensions` (previously duplicated twice within the scanner), and worker-count resolution (previously copy-pasted across scan, replace, and rename).
 
 ---
 

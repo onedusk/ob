@@ -24,6 +24,7 @@ pub mod patterns;
 pub mod replacer;
 pub mod scanner;
 pub mod state_manager;
+pub mod util;
 
 // Re-export main types for easier access by library users.
 pub use errors::{Error, Result};

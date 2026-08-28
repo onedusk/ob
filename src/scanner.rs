@@ -3,6 +3,7 @@ use crate::errors::Result;
 use crate::fingerprint::{FileFingerprint, Fingerprinter};
 use crate::output_formatter::{OutputFormat, OutputFormatter};
 use crate::state_manager::{CachedMatch, FileState, ScanState, StateManager};
+use crate::util::{normalize_extensions, resolve_workers, should_process_file};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::RegexSet;
@@ -140,7 +141,7 @@ impl Scanner {
         hidden: bool,
         no_ignore: bool,
     ) -> Result<Vec<Match>> {
-        let extensions = normalize_extensions_ref(extensions);
+        let extensions = normalize_extensions(extensions);
         self.scan_directory_with_set(dir, &extensions, hidden, no_ignore)
     }
 
@@ -185,7 +186,7 @@ impl Scanner {
         hidden: bool,
         no_ignore: bool,
     ) -> Result<Vec<Match>> {
-        let extensions = normalize_extensions_ref(extensions);
+        let extensions = normalize_extensions(extensions);
         self.scan_directory_parallel_with_set(dir, &extensions, workers, hidden, no_ignore)
     }
 
@@ -316,7 +317,7 @@ pub fn run_scan(
         return Err("--summary is only supported with --format text".into());
     }
 
-    let exts = normalize_extensions(extensions);
+    let exts = normalize_extensions(&extensions);
 
     // Load patterns: inline -e flags take precedence over the patterns file.
     let patterns: Vec<Pattern> = if !inline_patterns.is_empty() {
@@ -451,42 +452,6 @@ pub fn run_scan(
     }
 
     Ok(())
-}
-
-/// A helper function to determine if a file should be processed based on its extension.
-fn should_process_file(path: &Path, extensions: &HashSet<String>) -> bool {
-    if extensions.is_empty() {
-        return true;
-    }
-
-    path.extension()
-        .and_then(|os| os.to_str())
-        .map(|s| extensions.contains(&s.to_lowercase()))
-        .unwrap_or(false)
-}
-
-fn normalize_extensions(extensions: Vec<String>) -> HashSet<String> {
-    extensions
-        .into_iter()
-        .map(|e| e.trim().trim_start_matches('.').to_lowercase())
-        .filter(|e| !e.is_empty())
-        .collect()
-}
-
-fn normalize_extensions_ref(extensions: &[String]) -> HashSet<String> {
-    extensions
-        .iter()
-        .map(|e| e.trim().trim_start_matches('.').to_lowercase())
-        .filter(|e| !e.is_empty())
-        .collect()
-}
-
-fn resolve_workers(workers: Option<usize>) -> usize {
-    workers.unwrap_or_else(|| {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    })
 }
 
 /// Builds a directory walker for scanning. The standard filters (hidden
