@@ -1,3 +1,4 @@
+use crate::output_formatter::OutputFormat;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -115,9 +116,9 @@ pub enum Commands {
         #[arg(long = "content-hash")]
         content_hash: bool,
 
-        /// The output format for the scan results (e.g., `text`, `json`, `csv`, `sarif`, `html`).
-        #[arg(short = 'f', long = "format", default_value = "text")]
-        format: String,
+        /// The output format for the scan results.
+        #[arg(short = 'f', long = "format", value_enum, default_value = "text")]
+        format: OutputFormat,
 
         /// Include a summary of scan statistics in the output.
         #[arg(long = "summary")]
@@ -270,4 +271,25 @@ pub enum Commands {
 /// Parses command-line arguments and returns the populated `Args` struct.
 pub fn parse_args() -> Args {
     Args::parse()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_format_rejects_unknown_values() {
+        // A typo must fail at parse time, not silently fall back to text.
+        assert!(Args::try_parse_from(["ob", "scan", "-f", "jsonn", "."]).is_err());
+    }
+
+    #[test]
+    fn test_scan_format_accepts_known_values() {
+        for fmt in ["text", "json", "csv", "sarif", "html"] {
+            assert!(
+                Args::try_parse_from(["ob", "scan", "-f", fmt, "."]).is_ok(),
+                "format {fmt} must parse"
+            );
+        }
+    }
 }

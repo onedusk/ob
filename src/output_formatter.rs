@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 
 /// Defines the possible output formats for scan results.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::ValueEnum)]
 pub enum OutputFormat {
     /// A simple, human-readable text format.
     Text,
@@ -18,18 +18,6 @@ pub enum OutputFormat {
     Sarif,
     /// A rich HTML report.
     Html,
-}
-
-impl From<&str> for OutputFormat {
-    fn from(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "json" => OutputFormat::Json,
-            "csv" => OutputFormat::Csv,
-            "sarif" => OutputFormat::Sarif,
-            "html" => OutputFormat::Html,
-            _ => OutputFormat::Text,
-        }
-    }
 }
 
 /// A trait for types that can format scan matches into a string.

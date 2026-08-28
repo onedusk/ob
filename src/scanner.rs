@@ -306,7 +306,7 @@ pub fn run_scan(
     force_full: bool,
     clear_cache: bool,
     content_hash: bool,
-    format: String,
+    format: OutputFormat,
     include_summary: bool,
     hidden: bool,
     no_ignore: bool,
@@ -330,8 +330,6 @@ pub fn run_scan(
 
     // Create scanner
     let scanner = Arc::new(Scanner::new(patterns)?);
-
-    let output_format = OutputFormat::from(format.as_str());
 
     // Prepare output
     let mut writer: Box<dyn Write + Send> = match output {
@@ -401,7 +399,7 @@ pub fn run_scan(
         fingerprinter = Some(fp);
     }
 
-    let can_stream = matches!(output_format, OutputFormat::Text) && !include_summary && !incremental;
+    let can_stream = matches!(format, OutputFormat::Text) && !include_summary && !incremental;
 
     if can_stream {
         stream_text_output(scanner, &files_to_scan, workers, writer)?;
@@ -416,7 +414,7 @@ pub fn run_scan(
     let scanned_matches = scanner.scan_files_parallel(&files_to_scan, workers)?;
     all_matches.extend(scanned_matches);
 
-    let formatter = OutputFormatter::new(output_format, include_summary);
+    let formatter = OutputFormatter::new(format, include_summary);
     formatter.write_output(&mut writer, &all_matches)?;
 
     if incremental {
