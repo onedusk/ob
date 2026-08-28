@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::time::SystemTime;
 
 /// The core engine for scanning files for regex patterns.
@@ -220,11 +220,7 @@ impl Scanner {
     }
 
     /// Scans a list of files in parallel using a local Rayon thread pool.
-    fn scan_files_parallel(
-        &self,
-        files: &[PathBuf],
-        workers: Option<usize>,
-    ) -> Result<Vec<Match>> {
+    fn scan_files_parallel(&self, files: &[PathBuf], workers: Option<usize>) -> Result<Vec<Match>> {
         if files.is_empty() {
             return Ok(Vec::new());
         }
@@ -246,7 +242,7 @@ impl Scanner {
                 })
         })
     }
-    
+
     /// Scans a list of files in parallel and displays a progress bar.
     ///
     pub fn scan_with_progress(
@@ -255,33 +251,34 @@ impl Scanner {
         workers: Option<usize>,
     ) -> Result<Vec<Match>> {
         use indicatif::{ProgressBar, ProgressStyle};
-        
+
         let pb = ProgressBar::new(files.len() as u64);
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
                 .unwrap()
-                .progress_chars("##-")
+                .progress_chars("##-"),
         );
-        
+
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(resolve_workers(workers))
             .build()?;
 
-        let matches: Vec<Match> = pool.install(|| {
-            files
-                .par_iter()
-                .map(|path| {
-                    pb.inc(1);
-                    pb.set_message(format!("Scanning: {}", path.display()));
-                    self.scan_file(path)
-                })
-                .collect::<Result<Vec<_>>>()
-        })?
-        .into_iter()
-        .flatten()
-        .collect();
-        
+        let matches: Vec<Match> = pool
+            .install(|| {
+                files
+                    .par_iter()
+                    .map(|path| {
+                        pb.inc(1);
+                        pb.set_message(format!("Scanning: {}", path.display()));
+                        self.scan_file(path)
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })?
+            .into_iter()
+            .flatten()
+            .collect();
+
         pb.finish_with_message("Scan complete");
         Ok(matches)
     }
@@ -639,8 +636,7 @@ fn stream_text_output(
                         m.line_number,
                         m.line_content
                     );
-                    tx.send(line)
-                        .map_err(|_| "Output channel closed")?;
+                    tx.send(line).map_err(|_| "Output channel closed")?;
                 }
 
                 Ok(())
@@ -662,46 +658,56 @@ fn stream_text_output(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
-    
+    use tempfile::TempDir;
+
     #[test]
     fn test_regex_set_matching() {
         let patterns = vec![
-            Pattern { name: "email".into(), pattern: r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b".into() },
-            Pattern { name: "url".into(), pattern: r"https?://[^\s]+".into() },
-            Pattern { name: "ip".into(), pattern: r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b".into() },
+            Pattern {
+                name: "email".into(),
+                pattern: r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b".into(),
+            },
+            Pattern {
+                name: "url".into(),
+                pattern: r"https?://[^\s]+".into(),
+            },
+            Pattern {
+                name: "ip".into(),
+                pattern: r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b".into(),
+            },
         ];
-        
+
         let scanner = Scanner::new(patterns).unwrap();
-        
+
         // Create temp file with test content
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
         let test_content = "Contact: test@example.com\nVisit https://example.com\nServer: 192.168.1.1\nPlain text line\n";
         fs::write(&test_file, test_content).unwrap();
-        
+
         let matches = scanner.scan_file(&test_file).unwrap();
-        
+
         // Assert: 3 matches found, plain text line produces no matches
         assert_eq!(matches.len(), 3);
         assert!(matches.iter().any(|m| m.pattern_name == "email"));
         assert!(matches.iter().any(|m| m.pattern_name == "url"));
         assert!(matches.iter().any(|m| m.pattern_name == "ip"));
     }
-    
+
     #[test]
     fn test_pattern_name_preservation() {
-        let patterns = vec![
-            Pattern { name: "test_pattern".into(), pattern: r"test".into() },
-        ];
-        
+        let patterns = vec![Pattern {
+            name: "test_pattern".into(),
+            pattern: r"test".into(),
+        }];
+
         let scanner = Scanner::new(patterns).unwrap();
-        
+
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
         fs::write(&test_file, "this is a test").unwrap();
-        
+
         let matches = scanner.scan_file(&test_file).unwrap();
         assert_eq!(matches[0].pattern_name, "test_pattern");
     }
@@ -824,9 +830,11 @@ mod tests {
         assert_eq!(hidden_matches[0].file_path, dir.join(".env"));
 
         // collect_files (the run_scan path) must agree with the helpers.
-        assert!(collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
-            .unwrap()
-            .is_empty());
+        assert!(
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             collect_files(&[dir.to_path_buf()], &HashSet::new(), true, false).unwrap(),
             vec![dir.join(".env")]
@@ -865,9 +873,11 @@ mod tests {
         assert_eq!(no_ignore_matches[0].file_path, dir.join("secret.txt"));
 
         // collect_files (the run_scan path) must agree with the helpers.
-        assert!(collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
-            .unwrap()
-            .is_empty());
+        assert!(
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             collect_files(&[dir.to_path_buf()], &HashSet::new(), false, true).unwrap(),
             vec![dir.join("secret.txt")]
@@ -877,27 +887,32 @@ mod tests {
     #[test]
     fn test_parallel_produces_same_results() {
         let temp_dir = TempDir::new().unwrap();
-        
+
         // Create test files
         for i in 0..10 {
             let content = format!("test@example.com file {}", i);
             fs::write(temp_dir.path().join(format!("file{}.txt", i)), content).unwrap();
         }
-        
-        let patterns = vec![
-            Pattern { name: "email".into(), pattern: r"\b[\w._%+-]+@[\w.-]+\.[\w]{2,}\b".into() }
-        ];
-        
+
+        let patterns = vec![Pattern {
+            name: "email".into(),
+            pattern: r"\b[\w._%+-]+@[\w.-]+\.[\w]{2,}\b".into(),
+        }];
+
         let scanner = Scanner::new(patterns).unwrap();
-        
+
         // Sequential scan
-        let mut seq_results = scanner.scan_directory(temp_dir.path(), &[], false, false).unwrap();
+        let mut seq_results = scanner
+            .scan_directory(temp_dir.path(), &[], false, false)
+            .unwrap();
         seq_results.sort_by_key(|m| m.file_path.clone());
 
         // Parallel scan
-        let mut par_results = scanner.scan_directory_parallel(temp_dir.path(), &[], None, false, false).unwrap();
+        let mut par_results = scanner
+            .scan_directory_parallel(temp_dir.path(), &[], None, false, false)
+            .unwrap();
         par_results.sort_by_key(|m| m.file_path.clone());
-        
+
         // Results should be identical (after sorting)
         assert_eq!(seq_results.len(), par_results.len());
         assert_eq!(seq_results.len(), 10);

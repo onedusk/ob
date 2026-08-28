@@ -5,7 +5,7 @@
 
 use oober::cli::{self, Commands};
 use oober::errors::Result;
-use oober::{replacer, scanner, file_renamer};
+use oober::{file_renamer, replacer, scanner};
 use std::env;
 use std::process;
 
@@ -72,8 +72,12 @@ fn main() -> Result<()> {
                 eprintln!("Error: Missing required arguments\n");
                 eprintln!("USAGE EXAMPLES:");
                 eprintln!("  ob rename -d . -p 'test_(.*)' -r 'spec_$1'      # Rename test files");
-                eprintln!("  ob rename -d . -p '\\.tsx$' -r '.jsx' --dry-run  # Preview .tsx -> .jsx");
-                eprintln!("  ob rename -d . -p '(\\d+)_(.*)' -r '$2_$1'       # Reorder name parts");
+                eprintln!(
+                    "  ob rename -d . -p '\\.tsx$' -r '.jsx' --dry-run  # Preview .tsx -> .jsx"
+                );
+                eprintln!(
+                    "  ob rename -d . -p '(\\d+)_(.*)' -r '$2_$1'       # Reorder name parts"
+                );
                 eprintln!("\nFor more options: ob rename --help");
                 process::exit(1);
             }

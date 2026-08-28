@@ -41,19 +41,19 @@ pub enum Error {
     /// An error related to persisting a temporary file.
     #[error("Tempfile error: {0}")]
     TempFile(#[from] tempfile::PersistError),
-    
+
     /// An error related to CSV serialization.
     #[error("CSV error: {0}")]
     Csv(#[from] csv::Error),
-    
+
     /// An error related to JSON serialization.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-    
+
     /// An error that occurred converting a byte slice to a UTF-8 string.
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
-    
+
     /// An error from the `walkdir` crate.
     #[error("Walkdir error: {0}")]
     WalkDir(#[from] walkdir::Error),

@@ -9,8 +9,8 @@ use std::borrow::Cow;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::NamedTempFile;
 
 /// Core engine for finding and replacing patterns in files.
@@ -140,7 +140,12 @@ impl Replacer {
             let matches = block.regex.find_iter(new_content.as_ref()).count();
             if matches > 0 {
                 total_changes += matches;
-                new_content = Cow::Owned(block.regex.replace_all(new_content.as_ref(), "").into_owned());
+                new_content = Cow::Owned(
+                    block
+                        .regex
+                        .replace_all(new_content.as_ref(), "")
+                        .into_owned(),
+                );
             }
         }
 
@@ -160,8 +165,11 @@ impl Replacer {
                 let matches = pattern.find_iter(new_content.as_ref()).count();
                 if matches > 0 {
                     total_changes += matches;
-                    new_content =
-                        Cow::Owned(pattern.replace_all(new_content.as_ref(), replacement).into_owned());
+                    new_content = Cow::Owned(
+                        pattern
+                            .replace_all(new_content.as_ref(), replacement)
+                            .into_owned(),
+                    );
                 }
             } else {
                 // Delete lines after pattern
@@ -218,7 +226,9 @@ impl Replacer {
 
                 temp_file.persist(path)?;
             } else {
-                return Err(format!("Could not get parent directory for {}", path.display()).into());
+                return Err(
+                    format!("Could not get parent directory for {}", path.display()).into(),
+                );
             }
         }
 
@@ -378,8 +388,9 @@ pub fn run_replace(
     let log_changes = verbose || dry_run;
 
     pool.install(|| {
-        all_files.par_iter().for_each(|path| {
-            match replacer.process_file(path, options.clone()) {
+        all_files
+            .par_iter()
+            .for_each(|path| match replacer.process_file(path, options.clone()) {
                 Ok(result) => {
                     processed.fetch_add(1, Ordering::Relaxed);
                     if result.modified {
@@ -393,7 +404,11 @@ pub fn run_replace(
                                     result.changes
                                 );
                             } else {
-                                println!("Modified {} ({} changes)", path.display(), result.changes);
+                                println!(
+                                    "Modified {} ({} changes)",
+                                    path.display(),
+                                    result.changes
+                                );
                             }
                         }
                     }
@@ -402,8 +417,7 @@ pub fn run_replace(
                     eprintln!("Error processing file {}: {}", path.display(), e);
                     errors.fetch_add(1, Ordering::Relaxed);
                 }
-            }
-        });
+            });
     });
 
     println!("\n{}", "-".repeat(50));
@@ -640,9 +654,18 @@ mod tests {
         };
 
         let msg = err.to_string();
-        assert!(msg.contains("2 patterns"), "message must name pattern count: {msg}");
-        assert!(msg.contains("1 replacements"), "message must name replacement count: {msg}");
-        assert!(msg.contains("null"), "message must say null entries are explicit: {msg}");
+        assert!(
+            msg.contains("2 patterns"),
+            "message must name pattern count: {msg}"
+        );
+        assert!(
+            msg.contains("1 replacements"),
+            "message must name replacement count: {msg}"
+        );
+        assert!(
+            msg.contains("null"),
+            "message must say null entries are explicit: {msg}"
+        );
     }
 
     #[test]
@@ -748,9 +771,9 @@ mod tests {
             dir.to_path_buf(),
             vec!["txt".to_string()],
             vec!["generated".to_string()], // explicit --exclude must win over the config's [vendor]
-            true,  // no_backup
-            false, // dry_run
-            false, // verbose
+            true,                          // no_backup
+            false,                         // dry_run
+            false,                         // verbose
             Some(1),
         )
         .unwrap();

@@ -1,9 +1,9 @@
-use crate::scanner::Match;
 use crate::errors::Result;
+use crate::scanner::Match;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::io::Write;
 use std::path::PathBuf;
-use chrono::{DateTime, Utc};
 
 /// Defines the possible output formats for scan results.
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -55,18 +55,14 @@ impl OutputFormatter {
             tool_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
-    
+
     /// Writes the formatted scan results to a given writer.
     ///
     /// # Arguments
     ///
     /// * `writer` - The `Write` target (e.g., a file or `stdout`).
     /// * `matches` - The `Match` objects to format.
-    pub fn write_output<W: Write>(
-        &self,
-        writer: &mut W,
-        matches: &[Match],
-    ) -> Result<()> {
+    pub fn write_output<W: Write>(&self, writer: &mut W, matches: &[Match]) -> Result<()> {
         let output = match self.format {
             OutputFormat::Text => self.format_text(&matches)?,
             OutputFormat::Json => self.format_json(&matches)?,
@@ -74,21 +70,21 @@ impl OutputFormatter {
             OutputFormat::Sarif => self.format_sarif(&matches)?,
             OutputFormat::Html => self.format_html(&matches)?,
         };
-        
+
         writer.write_all(output.as_bytes())?;
-        
+
         if self.include_summary && matches!(self.format, OutputFormat::Text) {
             let summary = self.format_summary(&matches)?;
             writer.write_all(summary.as_bytes())?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Formats matches into a simple, human-readable text format.
     fn format_text(&self, matches: &[Match]) -> Result<String> {
         let mut output = String::new();
-        
+
         for m in matches {
             output.push_str(&format!(
                 "[{}] {}:{}: {}\n",
@@ -98,10 +94,10 @@ impl OutputFormatter {
                 m.line_content
             ));
         }
-        
+
         Ok(output)
     }
-    
+
     /// Formats matches into a structured JSON format.
     fn format_json(&self, matches: &[Match]) -> Result<String> {
         #[derive(Serialize)]
@@ -111,13 +107,13 @@ impl OutputFormatter {
             total_matches: usize,
             matches: Vec<JsonMatch>,
         }
-        
+
         #[derive(Serialize)]
         struct ToolInfo {
             name: String,
             version: String,
         }
-        
+
         #[derive(Serialize)]
         struct JsonMatch {
             pattern: String,
@@ -126,7 +122,7 @@ impl OutputFormatter {
             content: String,
             severity: String,
         }
-        
+
         let json_matches: Vec<JsonMatch> = matches
             .iter()
             .map(|m| JsonMatch {
@@ -137,7 +133,7 @@ impl OutputFormatter {
                 severity: self.get_severity(&m.pattern_name),
             })
             .collect();
-        
+
         let output = JsonOutput {
             tool: ToolInfo {
                 name: self.tool_name.clone(),
@@ -147,19 +143,19 @@ impl OutputFormatter {
             total_matches: matches.len(),
             matches: json_matches,
         };
-        
+
         Ok(serde_json::to_string_pretty(&output)?)
     }
-    
+
     /// Formats matches into a CSV table.
     fn format_csv(&self, matches: &[Match]) -> Result<String> {
         use csv::Writer;
-        
+
         let mut wtr = Writer::from_writer(vec![]);
-        
+
         // Write header
         wtr.write_record(&["Pattern", "File", "Line", "Content", "Severity"])?;
-        
+
         // Write records
         for m in matches {
             wtr.write_record(&[
@@ -170,11 +166,13 @@ impl OutputFormatter {
                 &self.get_severity(&m.pattern_name),
             ])?;
         }
-        
-        let data = wtr.into_inner().map_err(|e| format!("CSV writer error: {}", e))?;
+
+        let data = wtr
+            .into_inner()
+            .map_err(|e| format!("CSV writer error: {}", e))?;
         Ok(String::from_utf8(data).unwrap_or_default())
     }
-    
+
     /// Formats matches into the SARIF standard for static analysis results.
     fn format_sarif(&self, matches: &[Match]) -> Result<String> {
         #[derive(Serialize)]
@@ -185,20 +183,20 @@ impl OutputFormatter {
             version: String,
             runs: Vec<Run>,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Run {
             tool: Tool,
             results: Vec<SarifResult>,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Tool {
             driver: Driver,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Driver {
@@ -206,7 +204,7 @@ impl OutputFormatter {
             version: String,
             rules: Vec<Rule>,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Rule {
@@ -215,18 +213,18 @@ impl OutputFormatter {
             short_description: Description,
             default_configuration: Configuration,
         }
-        
+
         #[derive(Serialize)]
         struct Description {
             text: String,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Configuration {
             level: String,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct SarifResult {
@@ -235,50 +233,48 @@ impl OutputFormatter {
             message: Message,
             locations: Vec<Location>,
         }
-        
+
         #[derive(Serialize)]
         struct Message {
             text: String,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Location {
             physical_location: PhysicalLocation,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct PhysicalLocation {
             artifact_location: ArtifactLocation,
             region: Region,
         }
-        
+
         #[derive(Serialize)]
         struct ArtifactLocation {
             uri: String,
         }
-        
+
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Region {
             start_line: usize,
             snippet: Snippet,
         }
-        
+
         #[derive(Serialize)]
         struct Snippet {
             text: String,
         }
-        
+
         // Collect unique patterns for rules
-        let mut unique_patterns: Vec<String> = matches
-            .iter()
-            .map(|m| m.pattern_name.clone())
-            .collect();
+        let mut unique_patterns: Vec<String> =
+            matches.iter().map(|m| m.pattern_name.clone()).collect();
         unique_patterns.sort();
         unique_patterns.dedup();
-        
+
         let rules: Vec<Rule> = unique_patterns
             .iter()
             .map(|pattern| Rule {
@@ -292,15 +288,17 @@ impl OutputFormatter {
                 },
             })
             .collect();
-        
+
         let results: Vec<SarifResult> = matches
             .iter()
             .map(|m| SarifResult {
                 rule_id: m.pattern_name.clone(),
                 level: self.get_sarif_level(&m.pattern_name),
                 message: Message {
-                    text: format!("Found pattern '{}' at line {}", 
-                        m.pattern_name, m.line_number),
+                    text: format!(
+                        "Found pattern '{}' at line {}",
+                        m.pattern_name, m.line_number
+                    ),
                 },
                 locations: vec![Location {
                     physical_location: PhysicalLocation {
@@ -317,7 +315,7 @@ impl OutputFormatter {
                 }],
             })
             .collect();
-        
+
         let output = SarifOutput {
             schema: "https://json.schemastore.org/sarif-2.1.0.json".to_string(),
             version: "2.1.0".to_string(),
@@ -332,14 +330,14 @@ impl OutputFormatter {
                 results,
             }],
         };
-        
+
         Ok(serde_json::to_string_pretty(&output)?)
     }
-    
+
     /// Formats matches into a rich HTML report.
     fn format_html(&self, matches: &[Match]) -> Result<String> {
         let mut html = String::new();
-        
+
         html.push_str(r#"<!DOCTYPE html>
 <html>
 <head>
@@ -365,15 +363,20 @@ impl OutputFormatter {
     <h1>Oober Scanner Report</h1>
     <div class="summary">
         <strong>Total Matches:</strong> "#);
-        
+
         html.push_str(&matches.len().to_string());
-        html.push_str(r#"<br>
-        <strong>Scan Time:</strong> "#);
+        html.push_str(
+            r#"<br>
+        <strong>Scan Time:</strong> "#,
+        );
         html.push_str(&Utc::now().to_rfc3339());
-        html.push_str(r#"<br>
-        <strong>Tool Version:</strong> "#);
+        html.push_str(
+            r#"<br>
+        <strong>Tool Version:</strong> "#,
+        );
         html.push_str(&self.tool_version);
-        html.push_str(r#"
+        html.push_str(
+            r#"
     </div>
     
     <table>
@@ -386,13 +389,15 @@ impl OutputFormatter {
                 <th>Severity</th>
             </tr>
         </thead>
-        <tbody>"#);
-        
+        <tbody>"#,
+        );
+
         for m in matches {
             let severity = self.get_severity(&m.pattern_name);
             let severity_class = format!("severity-{}", severity.to_lowercase());
-            
-            html.push_str(&format!(r#"
+
+            html.push_str(&format!(
+                r#"
             <tr>
                 <td class="pattern">{}</td>
                 <td class="file">{}</td>
@@ -408,45 +413,51 @@ impl OutputFormatter {
                 severity
             ));
         }
-        
-        html.push_str(r#"
+
+        html.push_str(
+            r#"
         </tbody>
     </table>
 </body>
-</html>"#);
-        
+</html>"#,
+        );
+
         Ok(html)
     }
-    
+
     /// Generates a summary of scan results, including counts and top patterns.
     fn format_summary(&self, matches: &[Match]) -> Result<String> {
         use std::collections::HashMap;
-        
+
         let mut pattern_counts: HashMap<String, usize> = HashMap::new();
         let mut file_counts: HashMap<PathBuf, usize> = HashMap::new();
-        
+
         for m in matches {
             *pattern_counts.entry(m.pattern_name.clone()).or_insert(0) += 1;
             *file_counts.entry(m.file_path.clone()).or_insert(0) += 1;
         }
-        
+
         let mut summary = String::new();
-        summary.push_str(&format!("\n{} Summary {}\n", "=".repeat(20), "=".repeat(20)));
+        summary.push_str(&format!(
+            "\n{} Summary {}\n",
+            "=".repeat(20),
+            "=".repeat(20)
+        ));
         summary.push_str(&format!("Total matches: {}\n", matches.len()));
         summary.push_str(&format!("Files with matches: {}\n", file_counts.len()));
         summary.push_str(&format!("Unique patterns: {}\n\n", pattern_counts.len()));
-        
+
         summary.push_str("Top patterns:\n");
         let mut patterns: Vec<_> = pattern_counts.iter().collect();
         patterns.sort_by(|a, b| b.1.cmp(a.1));
-        
+
         for (pattern, count) in patterns.iter().take(10) {
             summary.push_str(&format!("  {} - {} matches\n", pattern, count));
         }
-        
+
         Ok(summary)
     }
-    
+
     /// Determines a severity level based on keywords in a pattern's name.
     ///
     /// # Optimization Note
@@ -464,14 +475,15 @@ impl OutputFormatter {
             "Medium".to_string()
         }
     }
-    
+
     /// Maps the internal severity level to a SARIF-compliant level.
     fn get_sarif_level(&self, pattern_name: &str) -> String {
         match self.get_severity(pattern_name).as_str() {
             "High" => "error",
             "Medium" => "warning",
             _ => "note",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 
@@ -487,7 +499,7 @@ fn html_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn create_test_matches() -> Vec<Match> {
         vec![
             Match {
@@ -504,67 +516,70 @@ mod tests {
             },
         ]
     }
-    
+
     #[test]
     fn test_json_format() {
         let formatter = OutputFormatter::new(OutputFormat::Json, false);
         let matches = create_test_matches();
-        
+
         let output = formatter.format_json(&matches).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
-        
+
         assert_eq!(parsed["total_matches"], 2);
         assert_eq!(parsed["matches"][0]["pattern"], "email");
     }
-    
+
     #[test]
     fn test_csv_format() {
         let formatter = OutputFormatter::new(OutputFormat::Csv, false);
         let matches = create_test_matches();
-        
+
         let output = formatter.format_csv(&matches).unwrap();
-        
+
         // Parse CSV and verify
         let mut rdr = csv::Reader::from_reader(output.as_bytes());
         let headers = rdr.headers().unwrap();
         assert_eq!(headers.get(0), Some("Pattern"));
-        
+
         let records: Vec<_> = rdr
             .records()
             .collect::<std::result::Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(records.len(), 2);
     }
-    
+
     #[test]
     fn test_sarif_format() {
         let formatter = OutputFormatter::new(OutputFormat::Sarif, false);
         let matches = create_test_matches();
-        
+
         let output = formatter.format_sarif(&matches).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
-        
+
         assert_eq!(parsed["version"], "2.1.0");
         assert_eq!(parsed["runs"][0]["results"].as_array().unwrap().len(), 2);
     }
-    
+
     #[test]
     fn test_html_format() {
         let formatter = OutputFormatter::new(OutputFormat::Html, false);
         let matches = create_test_matches();
-        
+
         let output = formatter.format_html(&matches).unwrap();
-        
+
         assert!(output.contains("<!DOCTYPE html>"));
         assert!(output.contains("test@example.com"));
         assert!(output.contains("sk-1234567890"));
     }
-    
+
     #[test]
     fn test_html_escaping() {
         let dangerous = "< script>alert('xss')</script>";
         let escaped = html_escape(dangerous);
-        
-        assert_eq!(escaped, "&lt; script&gt;alert(&#39;xss&#39;)&lt;/script&gt;");
+
+        assert_eq!(
+            escaped,
+            "&lt; script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
+        );
     }
 }

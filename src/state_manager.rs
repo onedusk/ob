@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
+use crate::errors::Result;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use serde::{Serialize, Deserialize};
-use crate::errors::Result;
 
 /// Represents the overall state of a scan, including metadata and file details.
 /// This struct is serialized to and from a JSON file to cache scan results.
@@ -69,16 +69,16 @@ impl StateManager {
     pub fn new(project_root: &Path) -> Result<Self> {
         let state_dir = Self::get_state_dir()?;
         let project_id = Self::compute_project_id(project_root)?;
-        
+
         // Ensure state directory exists
         fs::create_dir_all(&state_dir)?;
-        
+
         Ok(Self {
             state_dir,
             project_id,
         })
     }
-    
+
     /// Determines the directory for storing state files.
     ///
     /// It respects the `XDG_CACHE_HOME` environment variable if set, otherwise
@@ -87,14 +87,11 @@ impl StateManager {
         // Try XDG_CACHE_HOME first, then fallback
         let cache_dir = std::env::var("XDG_CACHE_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs::cache_dir()
-                    .unwrap_or_else(|| PathBuf::from(".cache"))
-            });
-        
+            .unwrap_or_else(|_| dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".cache")));
+
         Ok(cache_dir.join("oober"))
     }
-    
+
     /// Computes a unique ID for the project based on its canonical path.
     ///
     /// This ensures that different projects have separate cache files.
@@ -103,41 +100,41 @@ impl StateManager {
     ///
     /// * `project_root` - The root directory of the project.
     fn compute_project_id(project_root: &Path) -> Result<String> {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         let canonical = project_root.canonicalize()?;
         let path_str = canonical.to_string_lossy();
-        
+
         let mut hasher = Sha256::new();
         hasher.update(path_str.as_bytes());
         let result = hasher.finalize();
-        
+
         Ok(format!("{:x}", result))
     }
-    
+
     /// Loads the `ScanState` from the cache file for the current project.
     ///
     /// If the cache file does not exist, or if the version in the cache file
     /// does not match the current tool version, it returns `Ok(None)`.
     pub fn load_state(&self) -> Result<Option<ScanState>> {
         let state_file = self.state_file_path();
-        
+
         if !state_file.exists() {
             return Ok(None);
         }
-        
+
         let contents = fs::read_to_string(&state_file)?;
         let state: ScanState = serde_json::from_str(&contents)?;
-        
+
         // Validate version compatibility
         if state.version != env!("CARGO_PKG_VERSION") {
             // Version mismatch, invalidate cache
             return Ok(None);
         }
-        
+
         Ok(Some(state))
     }
-    
+
     /// Saves the `ScanState` to the cache file for the current project.
     ///
     /// The save operation is performed atomically by writing to a temporary file
@@ -155,23 +152,23 @@ impl StateManager {
     pub fn save_state(&self, state: &ScanState) -> Result<()> {
         let state_file = self.state_file_path();
         let contents = serde_json::to_string_pretty(state)?;
-        
+
         // Atomic write using tempfile
-        use tempfile::NamedTempFile;
         use std::io::Write;
-        
+        use tempfile::NamedTempFile;
+
         let mut temp_file = NamedTempFile::new_in(&self.state_dir)?;
         temp_file.write_all(contents.as_bytes())?;
         temp_file.persist(state_file)?;
-        
+
         Ok(())
     }
-    
+
     /// Constructs the full path to the state file for the current project.
     fn state_file_path(&self) -> PathBuf {
         self.state_dir.join(format!("{}.json", self.project_id))
     }
-    
+
     /// Deletes the cache file for the current project.
     pub fn clear_cache(&self) -> Result<()> {
         let state_file = self.state_file_path();
@@ -186,12 +183,12 @@ impl StateManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    
+
     #[test]
     fn test_state_persistence() {
         let temp_dir = TempDir::new().unwrap();
         let manager = StateManager::new(temp_dir.path()).unwrap();
-        
+
         let mut state = ScanState {
             version: env!("CARGO_PKG_VERSION").to_string(),
             last_scan: SystemTime::now(),
@@ -199,7 +196,7 @@ mod tests {
             patterns_hash: "test_hash".to_string(),
             scan_results: HashMap::new(),
         };
-        
+
         // Add test data
         state.files.insert(
             PathBuf::from("test.txt"),
@@ -209,22 +206,22 @@ mod tests {
                 size: 100,
                 hash: "abc123".to_string(),
                 last_scanned: SystemTime::now(),
-            }
+            },
         );
-        
+
         // Save and load
         manager.save_state(&state).unwrap();
         let loaded = manager.load_state().unwrap().unwrap();
-        
+
         assert_eq!(loaded.patterns_hash, state.patterns_hash);
         assert_eq!(loaded.files.len(), 1);
     }
-    
+
     #[test]
     fn test_version_invalidation() {
         let temp_dir = TempDir::new().unwrap();
         let manager = StateManager::new(temp_dir.path()).unwrap();
-        
+
         let state = ScanState {
             version: "0.0.1".to_string(), // Old version
             last_scan: SystemTime::now(),
@@ -232,10 +229,10 @@ mod tests {
             patterns_hash: "test".to_string(),
             scan_results: HashMap::new(),
         };
-        
+
         manager.save_state(&state).unwrap();
         let loaded = manager.load_state().unwrap();
-        
+
         // Should invalidate due to version mismatch
         assert!(loaded.is_none());
     }
