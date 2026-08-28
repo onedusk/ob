@@ -21,10 +21,6 @@ num_cpus = "1.16"                                              # CPU count detec
 sha2 = "0.10"                                                  # File fingerprinting
 dirs = "5.0"                                                   # XDG directories
 csv = "1.3"                                                    # CSV output format
-anyhow = "1.0"                                                 # Error handling
-async-trait = "0.1"                                            # Async traits
-futures = "0.3"                                                # Async utilities
-walkdir = "2.4"                                                # Directory walking
 
 [dev-dependencies]
 assert_cmd = "2.0"                                             # End-to-end CLI testing

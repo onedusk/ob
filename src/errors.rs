@@ -54,10 +54,6 @@ pub enum Error {
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
 
-    /// An error from the `walkdir` crate.
-    #[error("Walkdir error: {0}")]
-    WalkDir(#[from] walkdir::Error),
-
     /// A rename whose computed target already exists and would be overwritten.
     #[error("target already exists, refusing to overwrite: {0}")]
     RenameCollision(PathBuf),

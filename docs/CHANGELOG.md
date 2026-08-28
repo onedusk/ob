@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All documented preset names now match what the CLI accepts: help text and the no-arg banners showed PascalCase names (`--preset CleanDebug`) that clap rejects; every example now uses the kebab-case form (`--preset clean-debug`), and the replace help lists all seven presets.
 - The `trim-whitespace` and `remove-empty-comments` presets now work: their `^`/`$`-anchored patterns were compiled without `(?m)`, and since `replace` applies patterns to the whole file content, the anchors only matched at file boundaries — `trim-whitespace` was a no-op. The presets now use `(?m)` per-line anchors; `remove-empty-comments` also drops a knowingly-broken block entry. The `replace` help now documents that patterns match whole-file content and that per-line `^`/`$` anchors need `(?m)`.
 
+### Internal
+
+- Added a tuned `[profile.release]` (`lto = true`, `codegen-units = 1`, `strip = true`) for a faster, smaller release binary.
+- Removed unused dependencies `anyhow`, `async-trait`, `futures`, and `walkdir` (along with the never-constructed `Error::WalkDir` variant), cutting clean-build and link time.
+
 ---
 
 ## [0.1.3] - 2025-09-26
