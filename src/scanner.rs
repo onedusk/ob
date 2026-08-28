@@ -19,8 +19,9 @@ use std::time::SystemTime;
 /// The core engine for scanning files for regex patterns.
 ///
 /// A `Scanner` is initialized with a set of named patterns. It uses a `RegexSet`
-/// for efficient matching of multiple patterns against lines of text, and then
-/// confirms matches with the individual `Regex` objects.
+/// for efficient matching of multiple patterns against lines of text; the set's
+/// matched indices identify which named patterns hit each line (no per-pattern
+/// `Regex` re-confirmation is performed).
 pub struct Scanner {
     pattern_names: Vec<String>,
     pattern_set: RegexSet,
@@ -63,8 +64,8 @@ impl Scanner {
 
     /// Scans a single file for all configured patterns.
     ///
-    /// It reads the file and checks each line against the `RegexSet`. If any patterns
-    /// match, it confirms with the specific `Regex` to create `Match` objects.
+    /// It reads the file and checks each line against the `RegexSet`; every
+    /// pattern index the set reports produces a `Match` for that line.
     ///
     /// This function includes a simple heuristic to skip binary files by checking for
     /// null bytes in the first 1KB of the file.

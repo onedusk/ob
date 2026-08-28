@@ -14,11 +14,11 @@ We currently use it internally to update copyright information, find and change 
 - **Atomic file renaming** - Atomically rename files at scale.
 - **Undo support** - Restore files from backups with a single command
 - **Smart cleanup** - Automatically removes empty lines after block deletion and collapses consecutive empty lines
-- **Gitignore aware** - Respects `.gitignore` files automatically via the `ignore` crate
+- **Gitignore aware** - Respects `.gitignore` files automatically via the `ignore` crate (`scan` offers `--hidden` / `--no-ignore` to opt out)
 - **Directory exclusions** - Configure custom directory exclusions (e.g., node_modules, target) in YAML
 - **Backup management** - Clean up backup files when satisfied with changes
 - **Atomic writes** - Uses `tempfile` for safe file modifications
-- **Line-by-line processing** - Memory-efficient stream processing for large files
+- **Streaming scans** - `scan` reads files line-by-line for a small memory footprint (`replace` reads each file into memory to apply whole-file patterns)
 
 ## Installation
 
@@ -160,7 +160,7 @@ exclude: [node_modules, target, .git]
 2. **File Walker**: `ignore` crate provides gitignore-aware traversal
 3. **Parallel Processing**: `rayon` enables multi-threaded file processing
 4. **Atomic Writes**: `tempfile` ensures safe file modifications
-5. **Backup System**: Creates `.bak` files before modifications
+5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten, so the first backup preserves the original
 
 ### Command Structure
 
@@ -170,6 +170,7 @@ The tool uses a subcommand architecture:
 - `replace`: Replace/remove patterns with optional backup
 - `undo`: Restore files from backups
 - `clean-backups`: Remove backup files without restoring
+- `rename`: Batch rename files using regex patterns
 
 ## Use Cases
 
@@ -230,12 +231,12 @@ exclusions:
 ```
 
 ```bash
-# Scan for potential security issues
-ob scan -p patterns/secret_patterns.yaml -o security_audit.txt /project
+# Scan for potential security issues (include hidden + gitignored files,
+# where secrets most often live)
+ob scan -p secret_patterns.yaml --hidden --no-ignore -o security_audit.txt /project
 
-# Additional pattern collections available
-ob scan -p patterns/grammar_patterns.yaml /project  # Grammar checks
-ob scan -p patterns/log_patterns.yaml /project      # Log statements
+# Additional pattern collections ship in this repo under config/
+ob scan -p config/grammar_patterns.yaml /project  # Grammar checks
 ```
 
 ## Command Reference
@@ -249,8 +250,12 @@ Options:
 - `-p, --patterns <FILE>` - Path to YAML patterns file (default: patterns.yaml)
 - `-o, --output <FILE>` - Output file (default: stdout)
 - `-x, --ext <EXTENSIONS>` - Comma-separated file extensions to include
-- `-w, --workers <N>` - Number of threads to use (default: logical CPU cores)
+- `-w, --workers <N>` - Number of threads to use (default: logical CPU cores; env: `OOBER_WORKERS`)
+- `--hidden` - Include hidden files and directories (skipped by default)
+- `--no-ignore` - Do not respect `.gitignore`/`.ignore` files (respected by default)
 - `<INPUTS>...` - Files or directories to scan
+
+Note: By default, hidden files and directories (dotfiles such as `.env`, `.github/`) and anything matched by `.gitignore`/`.ignore` files are NOT scanned. For secret scanning, add `--hidden --no-ignore` so the most likely secret locations are not silently skipped.
 
 Note: Output order is not guaranteed when using multiple workers. Use `-w 1` or sort the output for deterministic ordering.
 
@@ -258,7 +263,7 @@ Note: Output order is not guaranteed when using multiple workers. Use `-w 1` or 
 
 `ob scan -i` (`--incremental`) caches per-file scan state so unchanged files are skipped on the next run. `--content-hash` compares content hashes instead of modification timestamps, `--force-full` re-scans everything, and `--clear-cache` deletes the cache first.
 
-The cache is stored at `$XDG_CACHE_HOME/oober/` (default: `~/.cache/oober/`), one JSON file per scanned project. It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
+The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/oober/` on Linux, `~/Library/Caches/oober/` on macOS), one JSON file per scanned project. It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
 
 ### `replace`
 
@@ -266,6 +271,7 @@ Replace or remove patterns in files.
 
 Options:
 
+- `--preset <PRESET>` - Built-in pattern set: `remove-copyright`, `clean-debug`, `remove-todos`, `trim-whitespace`, `remove-empty-comments`, `tabs-to-spaces`, `spaces-to-tabs`
 - `-c, --config <FILE>` - YAML configuration file
 - `-p, --pattern <PATTERN>` - Single pattern to match
 - `-r, --replacement <TEXT>` - Replacement text
@@ -312,7 +318,7 @@ Oober is designed for maximum performance:
 
 - **Parallel processing** - Uses all available CPU cores via Rayon
 - **SIMD regex** - Hardware-accelerated pattern matching
-- **Efficient I/O** - Streams files line-by-line to minimize memory usage
+- **Efficient I/O** - `scan` streams files line-by-line to minimize memory usage
 - **Smart filtering** - Respects .gitignore and filters by extension early
 - **Minimal allocations** - Optimized for hot paths
 
@@ -329,7 +335,7 @@ Benchmark on a large codebase (100k files):
 
 ## Safety Features
 
-- **Automatic backups** - Creates `.bak` files before any modification
+- **Automatic backups** - Creates `.bak` files before any modification; an existing backup is never overwritten
 - **Atomic writes** - Uses temporary files to prevent corruption
 - **Dry-run mode** - Preview all changes before applying
 - **Binary detection** - Automatically skips binary files
@@ -351,7 +357,7 @@ Dependencies:
 - `ignore` - Gitignore-aware file walking
 - `clap` - Command line parsing
 - `tempfile` - Atomic file operations
-- `chrono` - Timestamp handling
+- `chrono` - Scan report timestamps
 
 ```bash
 # Development build
@@ -379,7 +385,7 @@ Design principles (in priority order):
    - SIMD-powered regex
    - Efficient file traversal
 3. **Efficiency** - Optimize resource usage
-   - Stream processing (line-by-line)
+   - Streaming scan I/O (line-by-line)
    - Minimal memory footprint
    - Smart file filtering
 4. **Modularity** - Clean architecture
@@ -393,11 +399,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Important Notes
 
-- The tool respects `.gitignore` files automatically
+- The tool respects `.gitignore` files automatically; `scan` can opt out with `--hidden` / `--no-ignore`
 - Binary files are automatically skipped
-- Backups are created as `.bak` files before any modifications
+- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the first backup preserves the original)
 - Empty lines left after block removal are automatically cleaned up
-- Line-by-line processing means patterns cannot span multiple lines
+- `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)
 
 ## Recent Enhancements

@@ -18,11 +18,11 @@ Key features:
 
 - **Language**: Rust (2024 edition)
 - **Pattern Engine**: SIMD-powered regex with YAML configuration
-- **File Traversal**: `ignore` crate (gitignore-aware parallel walking)
+- **File Traversal**: `ignore` crate (gitignore-aware walking; the walk itself is serial, file processing is parallel)
 - **CLI Framework**: `clap` v4.5+ with derive macros
 - **Parallel Processing**: `rayon` for multi-threading
 - **Error Handling**: `thiserror` for custom error types
-- **Dependencies**: `tempfile` (atomic writes), `chrono` (timestamps), `serde_yaml_ng` (YAML parsing)
+- **Dependencies**: `tempfile` (atomic writes), `chrono` (scan report timestamps), `serde_yaml_ng` (YAML parsing)
 
 ## Common Commands
 
@@ -104,14 +104,19 @@ ob clean-backups --dir /path/to/process
 
 ```
 src/
- main.rs        # Entry point, command dispatching
- lib.rs         # Module exports and public API
- cli.rs         # Command-line argument parsing with clap
- scanner.rs     # Pattern scanning implementation
- replacer.rs    # Pattern replacement, undo, and backup management
- patterns.rs    # Pattern structure definitions
- config.rs      # YAML configuration parsing
- errors.rs      # Custom error types with thiserror
+ main.rs             # Entry point, command dispatching
+ lib.rs              # Module exports and public API
+ cli.rs              # Command-line argument parsing with clap
+ scanner.rs          # Pattern scanning implementation
+ replacer.rs         # Pattern replacement, undo, and backup management
+ file_renamer.rs     # Batch file renaming with regex patterns
+ patterns.rs         # Pattern structure definitions and built-in presets
+ config.rs           # YAML configuration parsing and config file resolution
+ output_formatter.rs # Scan output formats (text, JSON, CSV, SARIF, HTML)
+ state_manager.rs    # Incremental-scan cache persistence
+ fingerprint.rs      # File change detection (metadata / content hash)
+ util.rs             # Shared helpers (extension filtering, worker resolution)
+ errors.rs           # Custom error types with thiserror
 ```
 
 ### Command Structure
@@ -121,6 +126,7 @@ The tool uses a subcommand architecture via `cli::Commands` enum:
 - `replace`: Replace/remove patterns with optional backup (replacer::run_replace)
 - `undo`: Restore files from backups (replacer::run_undo)
 - `clean-backups`: Remove backup files without restoring (replacer::run_clean_backups)
+- `rename`: Batch rename files using regex patterns (file_renamer::run_rename)
 
 ### Core Components
 
@@ -161,11 +167,9 @@ exclude: [node_modules, target]  # Optional
 
 ## Key Files
 
-- `src/main.rs`: Unified entry point with all functionality
+- `src/main.rs`: Entry point and command dispatching
 - `Cargo.toml`: Dependencies and project configuration
-- `patterns.yaml`: Default scan patterns
-- `replace_config.yaml`: Example replacement configuration
-- `config/*.yaml`: Additional pattern collections
+- `config/*.yaml`: Example configs and additional pattern collections (`scan` looks for `./patterns.yaml` by default; override with `-p` or use `-e` for inline regexes)
 
 ## Development Workflow
 
@@ -230,7 +234,7 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
    - Efficient file traversal
 
 3. **Efficiency**: Optimize resource usage
-   - Stream processing (line-by-line)
+   - Streaming scan I/O (line-by-line)
    - Minimal memory footprint
    - Smart file filtering
 
@@ -241,14 +245,15 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 
 ## Important Notes
 
-- The tool respects `.gitignore` files automatically via the `ignore` crate
+- The tool respects `.gitignore` files automatically via the `ignore` crate; `scan` skips hidden files and directories by default too, and accepts `--hidden` / `--no-ignore` to include hidden or ignored files
 - Binary files are automatically skipped based on content detection
 - Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the oldest backup preserves the original)
 - Empty lines left after block removal are automatically cleaned up
-- Line-by-line processing means patterns cannot span multiple lines (use multiline blocks instead)
+- `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors (multi-line removals can also use `blocks`)
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)
-- The tool uses `BufReader` and `BufWriter` for efficient I/O on large files
+- `scan` streams files with `BufReader`/`BufWriter`; `replace` reads each file into memory
 - File modifications use atomic writes via `tempfile::NamedTempFile`
+- The incremental-scan cache lives at `$XDG_CACHE_HOME/oober/` (platform cache dir when unset) and stores matched line contents in plaintext — see the README's cache note
 
 ## Recent Enhancements
 
