@@ -95,21 +95,54 @@ impl Fingerprinter {
     /// modification time and content hash mode compute and compare the full
     /// content hash.
     pub fn has_file_changed(&self, path: &Path, cached_state: &FileState) -> Result<bool> {
+        Ok(self.check_file(path, cached_state)?.0)
+    }
+
+    /// Like [`Self::has_file_changed`], but also returns the fresh
+    /// `FileFingerprint` when the comparison had to compute one, so callers can
+    /// reuse it instead of reading the file again.
+    ///
+    /// The fingerprint is `None` when the file is unchanged (the cached state is
+    /// still valid) and when a size mismatch short-circuited the comparison
+    /// before any hash was computed.
+    pub fn check_file(
+        &self,
+        path: &Path,
+        cached_state: &FileState,
+    ) -> Result<(bool, Option<FileFingerprint>)> {
         let metadata = path.metadata()?;
 
         // Quick check: a size mismatch always means a change, so the
         // (potentially expensive) content hash is never needed.
         if metadata.len() != cached_state.size {
-            return Ok(true);
+            return Ok((true, None));
         }
 
-        if self.quick_mode {
+        let modified = metadata.modified()?;
+        let hash = if self.quick_mode {
             // Just check modification time
-            Ok(metadata.modified()? != cached_state.modified)
+            if modified == cached_state.modified {
+                return Ok((false, None));
+            }
+            self.compute_quick_hash(&metadata)?
         } else {
             // Full content hash comparison
-            Ok(self.compute_content_hash(path)? != cached_state.hash)
-        }
+            let hash = self.compute_content_hash(path)?;
+            if hash == cached_state.hash {
+                return Ok((false, None));
+            }
+            hash
+        };
+
+        Ok((
+            true,
+            Some(FileFingerprint {
+                path: path.to_path_buf(),
+                modified,
+                size: metadata.len(),
+                hash,
+            }),
+        ))
     }
 }
 
@@ -182,6 +215,37 @@ mod tests {
                 .has_file_changed(file.path(), &cached)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn test_check_file_returns_fingerprint_only_when_computed() {
+        let file = NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"aaaa").unwrap();
+
+        let fingerprinter = Fingerprinter::new(true);
+        let cached = cached_state_from(&fingerprinter.fingerprint_file(file.path()).unwrap());
+
+        // Unchanged: the cached state is still valid, no fingerprint returned.
+        let (changed, fingerprint) = fingerprinter.check_file(file.path(), &cached).unwrap();
+        assert!(!changed);
+        assert!(fingerprint.is_none());
+
+        // Same-size edit: the hash had to be computed, so it is handed back
+        // for reuse and matches the new content.
+        std::fs::write(file.path(), b"bbbb").unwrap();
+        let (changed, fingerprint) = fingerprinter.check_file(file.path(), &cached).unwrap();
+        assert!(changed);
+        let fingerprint = fingerprint.expect("computed fingerprint must be returned");
+        assert_eq!(
+            fingerprint.hash,
+            fingerprinter.fingerprint_file(file.path()).unwrap().hash
+        );
+
+        // Size mismatch: short-circuited before hashing, no fingerprint.
+        std::fs::write(file.path(), b"longer content").unwrap();
+        let (changed, fingerprint) = fingerprinter.check_file(file.path(), &cached).unwrap();
+        assert!(changed);
+        assert!(fingerprint.is_none());
     }
 
     #[cfg(unix)]

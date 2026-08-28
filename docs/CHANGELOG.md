@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 - Incremental change detection now compares file metadata first and computes the content hash only when sizes match: with `--incremental --content-hash`, a file whose size changed is no longer read and hashed just to be declared changed.
+- Incremental scans now carry the fingerprints computed during change detection into state saving instead of re-fingerprinting every file after scanning. A warm `--incremental --content-hash` run previously read and hashed every unchanged file twice; each file is now fingerprinted at most once per run. Cached results and scan output are unchanged.
 
 ### Fixed
 

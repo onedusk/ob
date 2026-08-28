@@ -1,6 +1,6 @@
 use crate::config::{ConfigLoader, Pattern};
 use crate::errors::Result;
-use crate::fingerprint::Fingerprinter;
+use crate::fingerprint::{FileFingerprint, Fingerprinter};
 use crate::output_formatter::{OutputFormat, OutputFormatter};
 use crate::state_manager::{CachedMatch, FileState, ScanState, StateManager};
 use ignore::WalkBuilder;
@@ -354,6 +354,9 @@ pub fn run_scan(
 
     let mut state_manager: Option<StateManager> = None;
     let mut fingerprinter: Option<Fingerprinter> = None;
+    // Fingerprints learned during change detection, carried into state saving
+    // so no file is fingerprinted (read, in content-hash mode) twice per run.
+    let mut known_fingerprints: HashMap<PathBuf, FileFingerprint> = HashMap::new();
 
     if incremental {
         let manager = StateManager::new(&project_root)?;
@@ -381,7 +384,19 @@ pub fn run_scan(
 
             for file in &files {
                 if let Some(file_state) = state.files.get(file) {
-                    if !fp.has_file_changed(file, file_state)? {
+                    let (changed, fingerprint) = fp.check_file(file, file_state)?;
+                    if !changed {
+                        // Unchanged: the cached fingerprint is still valid, so
+                        // state saving must not read the file again.
+                        known_fingerprints.insert(
+                            file.to_path_buf(),
+                            FileFingerprint {
+                                path: file.to_path_buf(),
+                                modified: file_state.modified,
+                                size: file_state.size,
+                                hash: file_state.hash.clone(),
+                            },
+                        );
                         if let Some(cached) = state.scan_results.get(file) {
                             cached_matches.extend(cached.iter().map(|m| Match {
                                 pattern_name: m.pattern_name.clone(),
@@ -391,6 +406,11 @@ pub fn run_scan(
                             }));
                         }
                         continue;
+                    }
+                    // Changed: reuse the fingerprint computed during detection,
+                    // if the comparison got far enough to produce one.
+                    if let Some(fingerprint) = fingerprint {
+                        known_fingerprints.insert(file.to_path_buf(), fingerprint);
                     }
                 }
 
@@ -425,7 +445,8 @@ pub fn run_scan(
     if incremental {
         let manager = state_manager.expect("State manager missing");
         let fp = fingerprinter.expect("Fingerprinter missing");
-        let scan_state = build_scan_state(&files, &all_matches, &fp, patterns_hash)?;
+        let scan_state =
+            build_scan_state(&files, known_fingerprints, &all_matches, &fp, patterns_hash)?;
         manager.save_state(&scan_state)?;
     }
 
@@ -553,6 +574,7 @@ fn compute_patterns_hash(patterns: &[Pattern]) -> String {
 
 fn build_scan_state(
     files: &[PathBuf],
+    mut known_fingerprints: HashMap<PathBuf, FileFingerprint>,
     matches: &[Match],
     fingerprinter: &Fingerprinter,
     patterns_hash: String,
@@ -561,7 +583,12 @@ fn build_scan_state(
     let mut file_states = HashMap::new();
 
     for file in files {
-        let fingerprint = fingerprinter.fingerprint_file(file)?;
+        // Reuse the fingerprint carried over from change detection; only files
+        // without one (new files, or size-mismatch short circuits) are read here.
+        let fingerprint = match known_fingerprints.remove(file) {
+            Some(fingerprint) => fingerprint,
+            None => fingerprinter.fingerprint_file(file)?,
+        };
         file_states.insert(
             file.to_path_buf(),
             FileState {
@@ -883,6 +910,55 @@ mod tests {
         assert_eq!(
             collect_files(&[dir.to_path_buf()], &HashSet::new(), false, true).unwrap(),
             vec![dir.join("secret.txt")]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_build_scan_state_reuses_carried_fingerprints() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("carried.txt");
+        fs::write(&file, "cached content").unwrap();
+
+        let fingerprinter = Fingerprinter::new(true); // content-hash mode
+        let fingerprint = fingerprinter.fingerprint_file(&file).unwrap();
+        let expected_hash = fingerprint.hash.clone();
+
+        let mut carried = HashMap::new();
+        carried.insert(file.clone(), fingerprint);
+
+        // Make the file unreadable: fingerprinting it would fail, so a passing
+        // build_scan_state proves the carried fingerprint was reused instead of
+        // the file being read a second time.
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+        let state = build_scan_state(
+            std::slice::from_ref(&file),
+            carried,
+            &[],
+            &fingerprinter,
+            "patterns".to_string(),
+        );
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let state = state.unwrap();
+        assert_eq!(state.files[&file].hash, expected_hash);
+
+        // A file without a carried fingerprint is still fingerprinted normally.
+        let fresh = temp_dir.path().join("fresh.txt");
+        fs::write(&fresh, "new content").unwrap();
+        let state = build_scan_state(
+            std::slice::from_ref(&fresh),
+            HashMap::new(),
+            &[],
+            &fingerprinter,
+            "patterns".to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            state.files[&fresh].hash,
+            fingerprinter.fingerprint_file(&fresh).unwrap().hash
         );
     }
 
