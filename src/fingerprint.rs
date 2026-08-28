@@ -147,26 +147,28 @@ mod tests {
     }
 
     #[test]
-    fn test_quick_mode_performance() {
-        use std::time::Instant;
-
+    fn test_quick_mode_hash_is_metadata_based() {
         let file = NamedTempFile::new().unwrap();
-        // Write 1MB of data
         let data = vec![0u8; 1_000_000];
         std::fs::write(file.path(), &data).unwrap();
 
         let quick = Fingerprinter::new(false);
         let full = Fingerprinter::new(true);
 
-        let start = Instant::now();
-        quick.fingerprint_file(file.path()).unwrap();
-        let quick_time = start.elapsed();
+        let quick_fp = quick.fingerprint_file(file.path()).unwrap();
+        let full_fp = full.fingerprint_file(file.path()).unwrap();
 
-        let start = Instant::now();
-        full.fingerprint_file(file.path()).unwrap();
-        let full_time = start.elapsed();
+        // Quick mode produces an "mtime-size" hash, not a content digest.
+        let (mtime, size) = quick_fp
+            .hash
+            .split_once('-')
+            .expect("quick hash should have the form <mtime>-<size>");
+        assert!(mtime.chars().all(|c| c.is_ascii_digit()));
+        assert_eq!(size, "1000000");
 
-        // Quick mode should be significantly faster
-        assert!(quick_time < full_time / 5);
+        // Content-hash mode produces a SHA-256 hex digest; the two must differ.
+        assert_eq!(full_fp.hash.len(), 64);
+        assert!(full_fp.hash.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(quick_fp.hash, full_fp.hash);
     }
 }
