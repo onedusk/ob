@@ -1,5 +1,5 @@
 use crate::config::{ConfigLoader, Pattern};
-use crate::errors::{Error, Result};
+use crate::errors::Result;
 use crate::fingerprint::{FileFingerprint, Fingerprinter};
 use crate::output_formatter::{OutputFormat, OutputFormatter};
 use crate::state_manager::{CachedMatch, FileState, ScanState, StateManager};
@@ -342,16 +342,15 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
             })
             .collect()
     } else {
-        let resolved = ConfigLoader::find_config(&patterns_file, &std::env::current_dir()?)
-            .map_err(|e| match e {
-                Error::Config(msg) => Error::Config(format!(
-                    "{msg}\n(pass -e '<regex>' to scan without a file, or -p <file> to use a different one)"
-                )),
-                other => other,
-            })?;
-        // Report on stderr which file was picked up; stdout carries the results.
-        eprintln!("Using patterns file: {}", resolved.display());
-        ConfigLoader::load_scan_config(&resolved)?.patterns
+        // The patterns file resolves ONLY as given (absolute, or relative to
+        // the current directory): a typo'd path must be an error, never a
+        // silent fallback to a same-named file elsewhere (e.g. a stale copy
+        // in $XDG_CONFIG_HOME/oober), which for a security scan would be a
+        // false all-clear.
+        let loaded = ConfigLoader::load_scan_config(&patterns_file)?.patterns;
+        // Report on stderr which file is used; stdout carries the results.
+        eprintln!("Using patterns file: {}", patterns_file.display());
+        loaded
     };
     let patterns_hash = compute_patterns_hash(&patterns);
 

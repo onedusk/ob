@@ -124,6 +124,54 @@ fn scan_reports_resolved_patterns_file_on_stderr_not_in_results() {
     );
 }
 
+#[test]
+fn scan_missing_patterns_file_errors_without_user_config_fallback() {
+    // Audit finding 13 repro: `scan -p` routed the patterns file through the
+    // config search chain, so a typo'd/missing local file silently fell back
+    // to a same-named stale file in $XDG_CONFIG_HOME/oober — wrong scan
+    // results with exit 0. The patterns file must resolve only as given
+    // (absolute, or relative to the CWD).
+    let temp = TempDir::new().unwrap();
+    let xdg = temp.path().join("xdg");
+    fs::create_dir_all(xdg.join("oober")).unwrap();
+    fs::write(
+        xdg.join("oober").join("missing.yaml"),
+        "patterns:\n  - name: stale\n    pattern: 'STALE'\n",
+    )
+    .unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("src.txt"), "hello TODO world\n").unwrap();
+
+    ob().current_dir(&work)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .arg("scan")
+        .arg("-p")
+        .arg("missing.yaml")
+        .arg(".")
+        .assert()
+        .failure()
+        .stderr(contains("missing.yaml"))
+        .stderr(contains("-e"));
+
+    // A patterns file that does exist relative to the CWD still works.
+    fs::write(
+        work.join("local.yaml"),
+        "patterns:\n  - name: todo\n    pattern: 'TODO'\n",
+    )
+    .unwrap();
+    ob().current_dir(&work)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .arg("scan")
+        .arg("-p")
+        .arg("local.yaml")
+        .arg("src.txt")
+        .assert()
+        .success()
+        .stdout(contains("hello TODO world"))
+        .stderr(contains("local.yaml"));
+}
+
 #[cfg(unix)]
 #[test]
 fn scan_warns_and_continues_on_unreadable_file() {
