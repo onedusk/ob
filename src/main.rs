@@ -49,6 +49,7 @@ fn main() -> Result<()> {
                 eprintln!("  ob replace -d . -p 'TODO' -r 'TODO'        # Simple replacement");
                 eprintln!("  ob replace -d . -c config.yaml --dry-run   # Preview changes");
                 eprintln!("  ob replace -d src/ -x py --preset remove-todos");
+                eprintln!("  ob replace --list-presets                  # List available presets");
                 eprintln!("\nFor more options: ob replace --help");
                 process::exit(1);
             }
@@ -121,6 +122,7 @@ fn main() -> Result<()> {
         }),
         Commands::Replace {
             preset,
+            list_presets,
             config,
             pattern,
             replacement,
@@ -131,19 +133,30 @@ fn main() -> Result<()> {
             dry_run,
             verbose,
             workers,
-        } => replacer::run_replace(replacer::ReplaceOptions {
-            preset,
-            config_file: config,
-            pattern,
-            replacement,
-            dir,
-            extensions,
-            exclude,
-            no_backup,
-            dry_run,
-            verbose,
-            workers,
-        }),
+        } => {
+            if list_presets {
+                print!("{}", cli::preset_listing());
+                Ok(())
+            } else if let Some(dir) = dir {
+                replacer::run_replace(replacer::ReplaceOptions {
+                    preset,
+                    config_file: config,
+                    pattern,
+                    replacement,
+                    dir,
+                    extensions,
+                    exclude,
+                    no_backup,
+                    dry_run,
+                    verbose,
+                    workers,
+                })
+            } else {
+                // --dir is optional in clap only so that --list-presets can
+                // run without one; an actual replace still needs it.
+                Err("replace requires --dir <DIR> (e.g. `ob replace -d . --preset clean-debug`); run `ob replace --list-presets` to see the available presets".into())
+            }
+        }
         Commands::Undo { dir, keep_backups } => replacer::run_undo(dir, keep_backups),
         Commands::CleanBackups { dir, dry_run } => replacer::run_clean_backups(dir, dry_run),
         Commands::Rename {

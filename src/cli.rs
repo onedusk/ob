@@ -144,6 +144,7 @@ pub enum Commands {
     ///   ob replace -d . -p 'TODO' -r 'TODO'        # Simple replacement
     ///   ob replace -d . -c config.yaml --dry-run   # Preview changes
     ///   ob replace -d src/ -x py --preset remove-todos
+    ///   ob replace --list-presets                  # List available presets
     ///
     /// Config file format (config.yaml):
     ///   patterns: ['console\\.log', 'debugger;']
@@ -162,6 +163,10 @@ pub enum Commands {
         #[arg(long, value_enum)]
         preset: Option<Preset>,
 
+        /// List the available presets with their descriptions, then exit.
+        #[arg(long)]
+        list_presets: bool,
+
         /// Path to a YAML configuration file for replacement rules.
         #[arg(short, long)]
         config: Option<PathBuf>,
@@ -174,9 +179,9 @@ pub enum Commands {
         #[arg(short, long)]
         replacement: Option<String>,
 
-        /// The directory to process.
-        #[arg(short, long, required = true)]
-        dir: PathBuf,
+        /// The directory to process. Required unless --list-presets is given.
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
 
         /// A comma-separated list of file extensions to include.
         #[arg(short = 'x', long = "ext", value_delimiter = ',')]
@@ -273,6 +278,25 @@ pub fn parse_args() -> Args {
     Args::parse()
 }
 
+/// Returns the listing printed by `replace --list-presets`: one line per
+/// preset with its kebab-case name and the one-line description taken from
+/// the `Preset` enum's doc comments (via clap's `ValueEnum` metadata, so the
+/// listing can never drift from `--help`).
+pub fn preset_listing() -> String {
+    use clap::ValueEnum;
+
+    let mut out = String::new();
+    for preset in Preset::value_variants() {
+        // `to_possible_value` is only `None` for variants skipped with
+        // `#[value(skip)]`, of which there are none.
+        if let Some(value) = preset.to_possible_value() {
+            let help = value.get_help().map(|h| h.to_string()).unwrap_or_default();
+            out.push_str(&format!("{:<22} {}\n", value.get_name(), help));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +315,34 @@ mod tests {
                 "format {fmt} must parse"
             );
         }
+    }
+
+    #[test]
+    fn test_replace_list_presets_parses_without_dir() {
+        assert!(Args::try_parse_from(["ob", "replace", "--list-presets"]).is_ok());
+    }
+
+    #[test]
+    fn test_preset_listing_names_every_preset_with_a_description() {
+        let listing = preset_listing();
+        for name in [
+            "remove-copyright",
+            "clean-debug",
+            "remove-todos",
+            "trim-whitespace",
+            "remove-empty-comments",
+            "tabs-to-spaces",
+            "spaces-to-tabs",
+        ] {
+            assert!(
+                listing.contains(name),
+                "listing must name {name}: {listing}"
+            );
+        }
+        // Descriptions come from the Preset doc comments.
+        assert!(
+            listing.contains("trailing whitespace"),
+            "each line must carry the variant's doc comment: {listing}"
+        );
     }
 }

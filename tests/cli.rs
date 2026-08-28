@@ -387,6 +387,39 @@ fn trim_whitespace_preset_strips_interior_trailing_whitespace() {
 }
 
 #[test]
+fn list_presets_runs_without_dir_and_lists_every_preset() {
+    let assert = ob().arg("replace").arg("--list-presets").assert().success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    for name in [
+        "remove-copyright",
+        "clean-debug",
+        "remove-todos",
+        "trim-whitespace",
+        "remove-empty-comments",
+        "tabs-to-spaces",
+        "spaces-to-tabs",
+    ] {
+        assert!(stdout.contains(name), "listing must name {name}: {stdout}");
+    }
+    assert!(
+        stdout.contains("trailing whitespace"),
+        "each preset line must carry its description: {stdout}"
+    );
+}
+
+#[test]
+fn replace_without_dir_or_list_presets_is_a_helpful_error() {
+    ob().arg("replace")
+        .arg("--preset")
+        .arg("trim-whitespace")
+        .assert()
+        .failure()
+        .stderr(contains("--dir"))
+        .stderr(contains("--list-presets"));
+}
+
+#[test]
 fn unknown_preset_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("t.txt");
