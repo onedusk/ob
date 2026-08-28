@@ -20,17 +20,6 @@ pub enum OutputFormat {
     Html,
 }
 
-/// A trait for types that can format scan matches into a string.
-///
-/// This is not currently used but could be part of a future refactoring to
-/// make the formatting logic more modular.
-pub trait Formatter {
-    /// Formats a slice of `Match` objects into a single string.
-    fn format_matches(&self, matches: &[Match]) -> Result<String>;
-    /// Creates a summary string from a slice of `Match` objects.
-    fn format_summary(&self, matches: &[Match]) -> Result<String>;
-}
-
 /// Handles the formatting of scan results into various output formats.
 pub struct OutputFormatter {
     format: OutputFormat,

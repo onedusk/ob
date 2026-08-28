@@ -23,13 +23,6 @@ pub enum Error {
     #[error("Config error: {0}")]
     Config(String),
 
-    /// An error that occurred during the processing of a single file.
-    #[error("File processing failed for {path}: {source}")]
-    Processing {
-        path: PathBuf,
-        source: Box<dyn std::error::Error + Send + Sync>,
-    },
-
     /// An error from the `ignore` crate, which is used for directory traversal.
     #[error("Walk error: {0}")]
     Walk(#[from] ignore::Error),
@@ -49,10 +42,6 @@ pub enum Error {
     /// An error related to JSON serialization.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
-
-    /// An error that occurred converting a byte slice to a UTF-8 string.
-    #[error("UTF-8 error: {0}")]
-    Utf8(#[from] std::string::FromUtf8Error),
 
     /// A rename whose computed target already exists and would be overwritten.
     #[error("target already exists, refusing to overwrite: {0}")]

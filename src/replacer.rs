@@ -1,7 +1,7 @@
 use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
-use crate::patterns::PatternManager;
+use crate::patterns::load_preset;
 use crate::util::{normalize_extensions, resolve_workers, should_process_file};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
@@ -21,16 +21,7 @@ use tempfile::NamedTempFile;
 pub struct Replacer {
     patterns: Vec<Regex>,
     replacements: Vec<Option<String>>,
-    blocks: Vec<BlockPattern>,
-}
-
-/// A compiled regex pattern for an ignorable block of text.
-pub struct BlockPattern {
-    regex: Regex,
-    #[allow(dead_code)]
-    start: String,
-    #[allow(dead_code)]
-    end: String,
+    blocks: Vec<Regex>,
 }
 
 /// Options for processing a file.
@@ -99,7 +90,7 @@ impl Replacer {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         // Compile block patterns
-        let blocks: Vec<BlockPattern> = config
+        let blocks: Vec<Regex> = config
             .blocks
             .iter()
             .map(|b| {
@@ -108,13 +99,9 @@ impl Replacer {
                     regex::escape(&b.start),
                     regex::escape(&b.end)
                 );
-                Ok(BlockPattern {
-                    regex: Regex::new(&pattern)?,
-                    start: b.start.clone(),
-                    end: b.end.clone(),
-                })
+                Regex::new(&pattern)
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(Self {
             patterns: regex_patterns,
@@ -154,7 +141,7 @@ impl Replacer {
         // Remove blocks first, counting matches during the single replace pass
         for block in &self.blocks {
             let mut matches = 0;
-            let replaced = block.regex.replace_all(
+            let replaced = block.replace_all(
                 new_content.as_ref(),
                 CountingReplacer {
                     replacement: "",
@@ -323,7 +310,7 @@ pub fn run_replace(
     let config = if let Some(preset_type) = preset {
         // Use built-in preset
         println!("Using preset: {preset_type:?}");
-        PatternManager::load_preset(&preset_type)
+        load_preset(&preset_type)
     } else if let Some(cfg_path) = config_file {
         // Use config file
         let resolved_path = ConfigLoader::find_config(&cfg_path, &dir)?;
@@ -943,14 +930,11 @@ mod tests {
 
     #[test]
     fn test_trim_whitespace_preset_strips_interior_trailing_whitespace() {
-        use crate::cli::Preset;
-        use crate::patterns::PatternManager;
-
         let temp_dir = TempDir::new().unwrap();
         let file = temp_dir.path().join("t.rs");
         fs::write(&file, "fn main() {   \n\tlet x = 1;\t\t\n}\n").unwrap();
 
-        let replacer = Replacer::new(PatternManager::load_preset(&Preset::TrimWhitespace)).unwrap();
+        let replacer = Replacer::new(load_preset(&Preset::TrimWhitespace)).unwrap();
         let result = replacer
             .process_file(
                 &file,
@@ -973,15 +957,11 @@ mod tests {
 
     #[test]
     fn test_remove_empty_comments_preset_matches_interior_lines() {
-        use crate::cli::Preset;
-        use crate::patterns::PatternManager;
-
         let temp_dir = TempDir::new().unwrap();
         let file = temp_dir.path().join("t.js");
         fs::write(&file, "code line\n//\nmore code\n").unwrap();
 
-        let replacer =
-            Replacer::new(PatternManager::load_preset(&Preset::RemoveEmptyComments)).unwrap();
+        let replacer = Replacer::new(load_preset(&Preset::RemoveEmptyComments)).unwrap();
         let result = replacer
             .process_file(
                 &file,

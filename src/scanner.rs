@@ -243,46 +243,6 @@ impl Scanner {
                 })
         })
     }
-
-    /// Scans a list of files in parallel and displays a progress bar.
-    ///
-    pub fn scan_with_progress(
-        &self,
-        files: Vec<PathBuf>,
-        workers: Option<usize>,
-    ) -> Result<Vec<Match>> {
-        use indicatif::{ProgressBar, ProgressStyle};
-
-        let pb = ProgressBar::new(files.len() as u64);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-                .unwrap()
-                .progress_chars("##-"),
-        );
-
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(resolve_workers(workers))
-            .build()?;
-
-        let matches: Vec<Match> = pool
-            .install(|| {
-                files
-                    .par_iter()
-                    .map(|path| {
-                        pb.inc(1);
-                        pb.set_message(format!("Scanning: {}", path.display()));
-                        self.scan_file(path)
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })?
-            .into_iter()
-            .flatten()
-            .collect();
-
-        pb.finish_with_message("Scan complete");
-        Ok(matches)
-    }
 }
 
 /// The main entry point for the `scan` command.
