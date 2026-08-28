@@ -222,6 +222,35 @@ fn scan_warns_and_continues_on_unreadable_file() {
 }
 
 #[test]
+fn incremental_scan_with_empty_xdg_cache_home_does_not_cache_in_project() {
+    // A set-but-empty XDG_CACHE_HOME resolved the cache dir to the relative
+    // "./oober", dropping a plaintext cache of matched lines (potentially
+    // secrets) inside the scanned project, where it can get committed.
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("src.txt"), "hello TODO world\n").unwrap();
+
+    ob().current_dir(&work)
+        .env("XDG_CACHE_HOME", "")
+        .env("HOME", &home)
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("--incremental")
+        .arg(".")
+        .assert()
+        .success();
+
+    assert!(
+        !work.join("oober").exists(),
+        "an empty XDG_CACHE_HOME must not put the scan cache inside the scanned project"
+    );
+}
+
+#[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     // clap usage errors exit with code 2; an unknown format must not silently

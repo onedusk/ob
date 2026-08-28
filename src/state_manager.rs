@@ -97,15 +97,26 @@ impl StateManager {
 
     /// Determines the directory for storing state files.
     ///
-    /// It respects the `XDG_CACHE_HOME` environment variable if set, otherwise
-    /// it falls back to the default user cache directory.
+    /// It respects the `XDG_CACHE_HOME` environment variable if set and
+    /// non-empty, otherwise it falls back to the default user cache directory.
     fn get_state_dir() -> Result<PathBuf> {
-        // Try XDG_CACHE_HOME first, then fallback
-        let cache_dir = std::env::var("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".cache")));
+        Ok(Self::base_cache_dir(std::env::var_os("XDG_CACHE_HOME")).join("oober"))
+    }
 
-        Ok(cache_dir.join("oober"))
+    /// The base cache directory for a given `XDG_CACHE_HOME` value.
+    ///
+    /// A set-but-empty `XDG_CACHE_HOME` is ignored exactly like an unset one
+    /// (matching the `XDG_CONFIG_HOME` handling in `config.rs`): treating `""`
+    /// as valid resolved to the relative path `./oober` — a plaintext cache of
+    /// matched lines dropped inside the scanned project, where it can get
+    /// committed.
+    fn base_cache_dir(xdg_cache_home: Option<std::ffi::OsString>) -> PathBuf {
+        if let Some(xdg) = xdg_cache_home {
+            if !xdg.is_empty() {
+                return PathBuf::from(xdg);
+            }
+        }
+        dirs::cache_dir().unwrap_or_else(|| PathBuf::from(".cache"))
     }
 
     /// Computes a unique ID for the project based on its canonical path.
@@ -274,6 +285,27 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(file_mode, 0o600, "cache file must be owner-only");
+    }
+
+    #[test]
+    fn test_base_cache_dir_ignores_empty_xdg_cache_home() {
+        use std::ffi::OsString;
+
+        // A set XDG_CACHE_HOME wins.
+        assert_eq!(
+            StateManager::base_cache_dir(Some(OsString::from("/custom/cache"))),
+            PathBuf::from("/custom/cache")
+        );
+
+        // A set-but-empty XDG_CACHE_HOME must fall back like an unset one.
+        // Treating "" as valid yielded the relative "./oober" — a plaintext
+        // cache dropped inside the scanned project.
+        let empty = StateManager::base_cache_dir(Some(OsString::new()));
+        assert!(
+            !empty.as_os_str().is_empty(),
+            "empty XDG_CACHE_HOME must not yield a relative cache dir"
+        );
+        assert_eq!(empty, StateManager::base_cache_dir(None));
     }
 
     #[test]
