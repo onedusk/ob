@@ -254,6 +254,12 @@ Options:
 
 Note: Output order is not guaranteed when using multiple workers. Use `-w 1` or sort the output for deterministic ordering.
 
+#### Incremental scanning
+
+`ob scan -i` (`--incremental`) caches per-file scan state so unchanged files are skipped on the next run. `--content-hash` compares content hashes instead of modification timestamps, `--force-full` re-scans everything, and `--clear-cache` deletes the cache first.
+
+The cache is stored at `$XDG_CACHE_HOME/oober/` (default: `~/.cache/oober/`), one JSON file per scanned project. It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
+
 ### `replace`
 
 Replace or remove patterns in files.

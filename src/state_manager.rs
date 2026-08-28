@@ -67,11 +67,27 @@ impl StateManager {
     ///
     /// * `project_root` - The root directory of the project.
     pub fn new(project_root: &Path) -> Result<Self> {
-        let state_dir = Self::get_state_dir()?;
+        Self::with_state_dir(Self::get_state_dir()?, project_root)
+    }
+
+    /// Creates a `StateManager` that stores state in the given directory,
+    /// creating it if needed.
+    ///
+    /// Cache files store the matched line contents of previous scans in
+    /// plaintext (potentially secrets), so on Unix the directory is kept
+    /// owner-only (0700) — including a pre-existing directory created by an
+    /// older version with looser permissions.
+    fn with_state_dir(state_dir: PathBuf, project_root: &Path) -> Result<Self> {
         let project_id = Self::compute_project_id(project_root)?;
 
         // Ensure state directory exists
         fs::create_dir_all(&state_dir)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o700))?;
+        }
 
         Ok(Self {
             state_dir,
@@ -158,6 +174,15 @@ impl StateManager {
         use tempfile::NamedTempFile;
 
         let mut temp_file = NamedTempFile::new_in(&self.state_dir)?;
+        // The cache holds matched line contents in plaintext; make the
+        // persisted file owner-only before it lands at its final path.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            temp_file
+                .as_file()
+                .set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
         temp_file.write_all(contents.as_bytes())?;
         temp_file.persist(state_file)?;
 
@@ -215,6 +240,40 @@ mod tests {
 
         assert_eq!(loaded.patterns_hash, state.patterns_hash);
         assert_eq!(loaded.files.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_cache_dir_and_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let state_dir = temp_dir.path().join("cache").join("oober");
+        // Pre-create with permissive mode: an existing dir from an older
+        // version must be tightened, not just freshly created dirs.
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let manager = StateManager::with_state_dir(state_dir.clone(), temp_dir.path()).unwrap();
+
+        let state = ScanState {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            last_scan: SystemTime::now(),
+            files: HashMap::new(),
+            patterns_hash: "perm_test".to_string(),
+            scan_results: HashMap::new(),
+        };
+        manager.save_state(&state).unwrap();
+
+        let dir_mode = fs::metadata(&state_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "cache dir must be owner-only");
+
+        let file_mode = fs::metadata(manager.state_file_path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(file_mode, 0o600, "cache file must be owner-only");
     }
 
     #[test]

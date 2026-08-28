@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All documented preset names now match what the CLI accepts: help text and the no-arg banners showed PascalCase names (`--preset CleanDebug`) that clap rejects; every example now uses the kebab-case form (`--preset clean-debug`), and the replace help lists all seven presets.
 - The `trim-whitespace` and `remove-empty-comments` presets now work: their `^`/`$`-anchored patterns were compiled without `(?m)`, and since `replace` applies patterns to the whole file content, the anchors only matched at file boundaries — `trim-whitespace` was a no-op. The presets now use `(?m)` per-line anchors; `remove-empty-comments` also drops a knowingly-broken block entry. The `replace` help now documents that patterns match whole-file content and that per-line `^`/`$` anchors need `(?m)`.
 
+### Security
+
+- The incremental-scan cache (`$XDG_CACHE_HOME/oober/`, default `~/.cache/oober/`) is now owner-only on Unix: the cache directory is created (and, if pre-existing, tightened) to `0700`, and cache files are written with `0600` permissions. The cache stores the matched line contents of previous scans in plaintext — scanning for secrets with `--incremental` copies those matches into it — and was previously world-readable by default. The README now documents the cache location and its contents.
+
 ### Internal
 
 - Added a tuned `[profile.release]` (`lto = true`, `codegen-units = 1`, `strip = true`) for a faster, smaller release binary.
