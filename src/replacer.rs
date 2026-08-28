@@ -4,7 +4,7 @@ use crate::errors::{Error, Result};
 use crate::patterns::PatternManager;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use regex::Regex;
+use regex::{Captures, Regex};
 use std::borrow::Cow;
 use std::fs;
 use std::io::{Read, Write};
@@ -56,6 +56,21 @@ pub struct UndoStats {
     pub found: usize,
     /// The number of files successfully restored from backups.
     pub restored: usize,
+}
+
+/// A `regex::Replacer` that expands the replacement string exactly like the
+/// built-in `&str` replacer while counting matches, so a replacement and its
+/// change count come from a single regex pass.
+struct CountingReplacer<'a> {
+    replacement: &'a str,
+    count: &'a mut usize,
+}
+
+impl regex::Replacer for CountingReplacer<'_> {
+    fn replace_append(&mut self, caps: &Captures<'_>, dst: &mut String) {
+        *self.count += 1;
+        caps.expand(self.replacement, dst);
+    }
 }
 
 impl Replacer {
@@ -135,17 +150,20 @@ impl Replacer {
         let mut new_content = Cow::Borrowed(content.as_str());
         let mut total_changes = 0;
 
-        // Remove blocks first
+        // Remove blocks first, counting matches during the single replace pass
         for block in &self.blocks {
-            let matches = block.regex.find_iter(new_content.as_ref()).count();
+            let mut matches = 0;
+            let replaced = block.regex.replace_all(
+                new_content.as_ref(),
+                CountingReplacer {
+                    replacement: "",
+                    count: &mut matches,
+                },
+            );
             if matches > 0 {
                 total_changes += matches;
-                new_content = Cow::Owned(
-                    block
-                        .regex
-                        .replace_all(new_content.as_ref(), "")
-                        .into_owned(),
-                );
+                let replaced = replaced.into_owned();
+                new_content = Cow::Owned(replaced);
             }
         }
 
@@ -161,15 +179,19 @@ impl Replacer {
         // Process patterns
         for (i, pattern) in self.patterns.iter().enumerate() {
             if let Some(ref replacement) = self.replacements[i] {
-                // Replace pattern
-                let matches = pattern.find_iter(new_content.as_ref()).count();
+                // Replace pattern, counting matches during the single replace pass
+                let mut matches = 0;
+                let replaced = pattern.replace_all(
+                    new_content.as_ref(),
+                    CountingReplacer {
+                        replacement: replacement.as_str(),
+                        count: &mut matches,
+                    },
+                );
                 if matches > 0 {
                     total_changes += matches;
-                    new_content = Cow::Owned(
-                        pattern
-                            .replace_all(new_content.as_ref(), replacement)
-                            .into_owned(),
-                    );
+                    let replaced = replaced.into_owned();
+                    new_content = Cow::Owned(replaced);
                 }
             } else {
                 // Delete lines after pattern
@@ -875,6 +897,55 @@ mod tests {
             fs::read_to_string(&file).unwrap(),
             "keep one\r\n\r\nkeep two\r\n",
             "block removal + empty-line cleanup must stay CRLF-terminated"
+        );
+    }
+
+    #[test]
+    fn test_single_pass_replace_counts_and_output_match_find_iter() {
+        use crate::config::Block;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        let original = "foo1 foo22 keep\n/* DEBUG START */\nnoise\n/* DEBUG END */\nfoo333\n/* DEBUG START */ x /* DEBUG END */\nplain\n";
+        fs::write(&file, original).unwrap();
+
+        let pattern = r"foo(\d+)";
+        let replacement = "bar$1";
+        let replacer = Replacer::new(ReplaceConfig {
+            patterns: vec![pattern.into()],
+            replacements: vec![Some(replacement.into())],
+            blocks: vec![Block {
+                start: "/* DEBUG START */".into(),
+                end: "/* DEBUG END */".into(),
+            }],
+            extensions: None,
+            exclude: None,
+        })
+        .unwrap();
+
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        // Counts must match what two-pass find_iter().count() reported:
+        // 2 block matches + 3 pattern matches.
+        assert_eq!(result.changes, 5);
+        assert!(result.modified);
+
+        // Output must be byte-identical to the plain &str replace_all path,
+        // including `$1` capture-group expansion.
+        let re = Regex::new(pattern).unwrap();
+        let expected = re.replace_all("foo1 foo22 keep\n\nfoo333\n\nplain\n", replacement);
+        assert_eq!(fs::read_to_string(&file).unwrap(), expected);
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "bar1 bar22 keep\n\nbar333\n\nplain\n"
         );
     }
 
