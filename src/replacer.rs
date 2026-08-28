@@ -1,6 +1,6 @@
 use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use crate::patterns::PatternManager;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
@@ -347,6 +347,7 @@ pub fn run_replace(
     let processed = AtomicUsize::new(0);
     let modified = AtomicUsize::new(0);
     let total_changes = AtomicUsize::new(0);
+    let errors = AtomicUsize::new(0);
 
     // Process files in parallel
     let pool = rayon::ThreadPoolBuilder::new()
@@ -387,6 +388,7 @@ pub fn run_replace(
                 }
                 Err(e) => {
                     eprintln!("Error processing file {}: {}", path.display(), e);
+                    errors.fetch_add(1, Ordering::Relaxed);
                 }
             }
         });
@@ -396,6 +398,12 @@ pub fn run_replace(
     println!("Files scanned : {}", processed.load(Ordering::Relaxed));
     println!("Files changed : {}", modified.load(Ordering::Relaxed));
     println!("Total edits   : {}", total_changes.load(Ordering::Relaxed));
+
+    let error_count = errors.load(Ordering::Relaxed);
+    if error_count > 0 {
+        println!("Errors        : {error_count}");
+        return Err(Error::ReplaceFailed(error_count));
+    }
 
     Ok(())
 }
@@ -818,6 +826,50 @@ mod tests {
             fs::read_to_string(&file).unwrap(),
             "code line\n\nmore code\n"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_replace_exits_nonzero_when_a_file_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("readable.txt"), "alpha one\n").unwrap();
+        let locked = dir.join("locked.txt");
+        fs::write(&locked, "alpha two\n").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = run_replace(
+            None,
+            None,
+            Some("alpha".into()),
+            Some("beta".into()),
+            dir.to_path_buf(),
+            vec![],
+            vec![],
+            true,  // no_backup
+            false, // dry_run
+            false, // verbose
+            Some(1),
+        );
+
+        // Restore permissions before asserting so TempDir cleanup succeeds.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+
+        match result {
+            Err(Error::ReplaceFailed(1)) => {}
+            other => panic!(
+                "a failed file must make run_replace return Err(ReplaceFailed(1)), got: {:?}",
+                other.map(|_| ())
+            ),
+        }
+        // Readable files are still processed despite the failure.
+        assert_eq!(
+            fs::read_to_string(dir.join("readable.txt")).unwrap(),
+            "beta one\n"
+        );
+        assert_eq!(fs::read_to_string(&locked).unwrap(), "alpha two\n");
     }
 
     #[test]

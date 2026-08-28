@@ -69,6 +69,10 @@ pub enum Error {
     /// A rename run that finished with per-file errors.
     #[error("rename finished with {0} error(s)")]
     RenameFailed(usize),
+
+    /// A replace run that finished with per-file errors.
+    #[error("replace finished with {0} file(s) failed")]
+    ReplaceFailed(usize),
 }
 
 /// A convenient type alias for `Result<T, oober::errors::Error>`.
