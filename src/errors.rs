@@ -57,6 +57,18 @@ pub enum Error {
     /// An error from the `walkdir` crate.
     #[error("Walkdir error: {0}")]
     WalkDir(#[from] walkdir::Error),
+
+    /// A rename whose computed target already exists and would be overwritten.
+    #[error("target already exists, refusing to overwrite: {0}")]
+    RenameCollision(PathBuf),
+
+    /// A rename whose computed target escapes the source file's directory.
+    #[error("target escapes the source directory: {0}")]
+    RenameEscape(PathBuf),
+
+    /// A rename run that finished with per-file errors.
+    #[error("rename finished with {0} error(s)")]
+    RenameFailed(usize),
 }
 
 /// A convenient type alias for `Result<T, oober::errors::Error>`.

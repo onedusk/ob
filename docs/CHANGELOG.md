@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `replace` no longer overwrites an existing `<file>.bak` on repeated runs; the oldest backup is preserved because it holds the pre-oober original, so `undo` restores the true original instead of an intermediate state. Docs claiming timestamped backups were corrected (backups never had timestamps).
 - `replace` now rejects a config whose `replacements` list is a different length than `patterns`. Previously, missing entries were silently padded with `null` — which means "delete the line after each match" — so an innocent config omission destructively deleted unrelated lines. The error names both lengths; to delete lines intentionally, write an explicit `null` entry.
 - `replace` no longer converts CRLF files to LF. The `null`-replacement line-deletion path and the empty-line cleanup after block removal rebuilt files with `\n` regardless of the original line endings, rewriting every line of Windows-encoded files; both paths now detect and preserve the file's line ending style, including the trailing newline.
+- `rename` no longer overwrites an existing file when two names map to the same target: the colliding rename is skipped with an error naming both paths and both files are kept. Previously one file's content was silently destroyed (nondeterministically, under parallel execution) while the summary reported success.
+- `rename` skips files with non-UTF-8 names with a warning instead of panicking (a panic in one worker aborted the entire run mid-rename).
+- `rename` rejects a computed target that would leave the file's directory (a replacement containing `/` or `..`) instead of relocating the file outside the tree.
+- `rename` now exits non-zero when any rename failed or was skipped due to a collision or an escaping target, and the summary includes an error count.
 
 ---
 
