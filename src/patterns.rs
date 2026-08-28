@@ -157,7 +157,9 @@ impl PatternManager {
 
             Preset::TrimWhitespace => ReplaceConfig {
                 patterns: vec![
-                    "[ \\t]+$".to_string(), // Trailing whitespace
+                    // (?m) makes $ match at every line end; patterns are applied
+                    // to the whole file content, not line-by-line.
+                    "(?m)[ \\t]+$".to_string(), // Trailing whitespace
                 ],
                 replacements: vec![Some("".to_string())],
                 blocks: vec![],
@@ -167,23 +169,18 @@ impl PatternManager {
 
             Preset::RemoveEmptyComments => ReplaceConfig {
                 patterns: vec![
-                    "^\\s*//\\s*$".to_string(),           // Empty // comments
-                    "^\\s*#\\s*$".to_string(),            // Empty # comments
-                    "^\\s*/\\*\\s*\\*/\\s*$".to_string(), // Empty /* */ comments
+                    // (?m) makes ^/$ match at every line boundary; patterns are
+                    // applied to the whole file content, not line-by-line.
+                    "(?m)^[ \\t]*//[ \\t]*$".to_string(), // Empty // comments
+                    "(?m)^[ \\t]*#[ \\t]*$".to_string(),  // Empty # comments
+                    "(?m)^[ \\t]*/\\*[ \\t]*\\*/[ \\t]*$".to_string(), // Empty /* */ comments
                 ],
                 replacements: vec![
                     Some("".to_string()),
                     Some("".to_string()),
                     Some("".to_string()),
                 ],
-                // TODO: The block handling for multi-line empty comments needs a more robust implementation.
-                // An empty `end` pattern is not a reliable way to define a block. A better approach
-                // would be to have a dedicated pattern that matches empty multi-line comment blocks,
-                // like `/\*\s*\*/`.
-                blocks: vec![Block {
-                    start: "/*\n */".to_string(),
-                    end: "".to_string(), // This won't work, need to handle differently
-                }],
+                blocks: vec![],
                 extensions: None,
                 exclude: None,
             },

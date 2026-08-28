@@ -760,6 +760,67 @@ mod tests {
     }
 
     #[test]
+    fn test_trim_whitespace_preset_strips_interior_trailing_whitespace() {
+        use crate::cli::Preset;
+        use crate::patterns::PatternManager;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.rs");
+        fs::write(&file, "fn main() {   \n\tlet x = 1;\t\t\n}\n").unwrap();
+
+        let replacer = Replacer::new(PatternManager::load_preset(&Preset::TrimWhitespace)).unwrap();
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.changes, 2,
+            "trailing whitespace on interior lines must be matched (anchors need (?m))"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "fn main() {\n\tlet x = 1;\n}\n"
+        );
+    }
+
+    #[test]
+    fn test_remove_empty_comments_preset_matches_interior_lines() {
+        use crate::cli::Preset;
+        use crate::patterns::PatternManager;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.js");
+        fs::write(&file, "code line\n//\nmore code\n").unwrap();
+
+        let replacer =
+            Replacer::new(PatternManager::load_preset(&Preset::RemoveEmptyComments)).unwrap();
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.changes, 1,
+            "an interior lone // line must be matched (anchors need (?m))"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "code line\n\nmore code\n"
+        );
+    }
+
+    #[test]
     fn test_repeated_replace_preserves_original_backup() {
         let temp_dir = TempDir::new().unwrap();
         let dir = temp_dir.path();

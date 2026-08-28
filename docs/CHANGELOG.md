@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rename` skips files with non-UTF-8 names with a warning instead of panicking (a panic in one worker aborted the entire run mid-rename).
 - `rename` rejects a computed target that would leave the file's directory (a replacement containing `/` or `..`) instead of relocating the file outside the tree.
 - `rename` now exits non-zero when any rename failed or was skipped due to a collision or an escaping target, and the summary includes an error count.
+- The `trim-whitespace` and `remove-empty-comments` presets now work: their `^`/`$`-anchored patterns were compiled without `(?m)`, and since `replace` applies patterns to the whole file content, the anchors only matched at file boundaries — `trim-whitespace` was a no-op. The presets now use `(?m)` per-line anchors; `remove-empty-comments` also drops a knowingly-broken block entry. The `replace` help now documents that patterns match whole-file content and that per-line `^`/`$` anchors need `(?m)`.
 
 ---
 

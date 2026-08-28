@@ -137,6 +137,9 @@ pub enum Commands {
     ///     - start: '/* DEBUG START */'
     ///       end: '/* DEBUG END */'
     ///
+    /// Patterns are matched against the whole file content, not line-by-line:
+    /// use (?m) for per-line ^/$ anchors (e.g. '(?m)[ \t]+$').
+    ///
     /// Available presets: RemoveCopyright, CleanDebug, RemoveTodos, TrimWhitespace
     Replace {
         /// The name of a built-in preset to use for replacement.
