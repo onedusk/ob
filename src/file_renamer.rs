@@ -3,6 +3,7 @@ use crate::util::resolve_workers;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::Regex;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -50,26 +51,53 @@ pub fn run_rename(
     let errors = AtomicUsize::new(0);
     let log_changes = verbose || dry_run;
 
+    // Plan every target serially before any rename runs. Two files mapping to
+    // the same name are caught here deterministically; checking per file from
+    // inside the worker pool was a check-then-rename race in which both files
+    // could pass the existence check and one overwrote the other.
+    let mut planned: Vec<(&PathBuf, PathBuf)> = Vec::new();
+    let mut claimed: HashSet<PathBuf> = HashSet::new();
+    for path in &all_files {
+        match replacer.plan_rename(path) {
+            Ok(Some(new_path)) => {
+                if !claimed.insert(new_path.clone()) {
+                    eprintln!(
+                        "Error renaming file {}: {}",
+                        path.display(),
+                        Error::RenameCollision(new_path)
+                    );
+                    errors.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    planned.push((path, new_path));
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("Error renaming file {}: {}", path.display(), e);
+                errors.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        processed.fetch_add(1, Ordering::Relaxed);
+    }
+
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(resolve_workers(workers))
         .build()?;
 
     pool.install(|| {
-        all_files.par_iter().for_each(|path| {
-            match replacer.rename_file(path, dry_run) {
-                Ok(Some(new_path)) => {
+        planned.par_iter().for_each(|(path, new_path)| {
+            match replacer.execute_rename(path, new_path, dry_run) {
+                Ok(()) => {
                     renamed.fetch_add(1, Ordering::Relaxed);
                     if log_changes {
                         println!("Renamed: {} -> {}", path.display(), new_path.display());
                     }
                 }
-                Ok(None) => {}
                 Err(e) => {
                     eprintln!("Error renaming file {}: {}", path.display(), e);
                     errors.fetch_add(1, Ordering::Relaxed);
                 }
             }
-            processed.fetch_add(1, Ordering::Relaxed);
         });
     });
 
@@ -104,18 +132,15 @@ impl FileRenamer {
         path.with_file_name(new_file_name.into_owned())
     }
 
-    /// Renames a single file if its name matches the pattern.
-    ///
-    /// If `dry_run` is `true`, it checks if the file would be renamed but doesn't
-    /// perform the operation.
+    /// Computes and validates the rename target for a single file.
     ///
     /// # Returns
     ///
-    /// Returns `Ok(Some(new_path))` if the file was (or would be) renamed, and
-    /// `Ok(None)` if it did not match (or has a non-UTF-8 name and was skipped).
-    /// Returns an error if the computed target already exists or would land
-    /// outside the source file's directory.
-    fn rename_file(&self, path: &Path, dry_run: bool) -> Result<Option<PathBuf>> {
+    /// Returns `Ok(Some(new_path))` if the file's name matches the pattern,
+    /// and `Ok(None)` if it did not match (or has a non-UTF-8 name and was
+    /// skipped). Returns an error if the computed target would land outside
+    /// the source file's directory.
+    fn plan_rename(&self, path: &Path) -> Result<Option<PathBuf>> {
         let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
             eprintln!(
                 "Warning: skipping file with non-UTF-8 name: {}",
@@ -132,16 +157,23 @@ impl FileRenamer {
         if new_path.parent() != path.parent() {
             return Err(Error::RenameEscape(new_path));
         }
-        // Best-effort collision check: under parallel renames another worker
-        // can still create the target between this check and fs::rename, but
-        // it catches two files mapping to the same name in the common case.
+        Ok(Some(new_path))
+    }
+
+    /// Performs a single planned rename.
+    ///
+    /// Duplicate targets among the planned renames are rejected up front by
+    /// `run_rename`, so the existence check here guards against a target that
+    /// already exists on disk (a file not part of this run). If `dry_run` is
+    /// `true`, the check runs but the rename is not performed.
+    fn execute_rename(&self, path: &Path, new_path: &Path, dry_run: bool) -> Result<()> {
         if new_path != path && new_path.exists() {
-            return Err(Error::RenameCollision(new_path));
+            return Err(Error::RenameCollision(new_path.to_path_buf()));
         }
         if !dry_run {
-            fs::rename(path, &new_path)?;
+            fs::rename(path, new_path)?;
         }
-        Ok(Some(new_path))
+        Ok(())
     }
 }
 
@@ -154,6 +186,17 @@ mod tests {
         FileRenamer::new(Regex::new(pattern).unwrap(), replacement.to_string())
     }
 
+    /// Serial plan-then-execute helper mirroring the old single-call API.
+    fn rename_file(r: &FileRenamer, path: &Path, dry_run: bool) -> Result<Option<PathBuf>> {
+        match r.plan_rename(path)? {
+            Some(new_path) => {
+                r.execute_rename(path, &new_path, dry_run)?;
+                Ok(Some(new_path))
+            }
+            None => Ok(None),
+        }
+    }
+
     #[test]
     fn test_collision_with_existing_target_is_skipped() {
         let temp_dir = TempDir::new().unwrap();
@@ -162,7 +205,7 @@ mod tests {
         fs::write(dir.join("merged.txt"), "existing").unwrap();
 
         let r = renamer(r"file_\d", "merged");
-        let err = r.rename_file(&dir.join("file_1.txt"), false).unwrap_err();
+        let err = rename_file(&r, &dir.join("file_1.txt"), false).unwrap_err();
         assert!(matches!(err, Error::RenameCollision(_)), "got: {err}");
 
         // Both files intact, contents untouched.
@@ -183,9 +226,9 @@ mod tests {
         fs::write(dir.join("file_2.txt"), "two").unwrap();
 
         let r = renamer(r"file_\d", "merged");
-        let first = r.rename_file(&dir.join("file_1.txt"), false).unwrap();
+        let first = rename_file(&r, &dir.join("file_1.txt"), false).unwrap();
         assert_eq!(first, Some(dir.join("merged.txt")));
-        let second = r.rename_file(&dir.join("file_2.txt"), false);
+        let second = rename_file(&r, &dir.join("file_2.txt"), false);
         assert!(matches!(second, Err(Error::RenameCollision(_))));
 
         assert_eq!(fs::read_to_string(dir.join("merged.txt")).unwrap(), "one");
@@ -199,7 +242,7 @@ mod tests {
         fs::write(dir.join("file_1.txt"), "one").unwrap();
 
         let r = renamer(r"file_\d", "../evil");
-        let err = r.rename_file(&dir.join("file_1.txt"), false).unwrap_err();
+        let err = r.plan_rename(&dir.join("file_1.txt")).unwrap_err();
         assert!(matches!(err, Error::RenameEscape(_)), "got: {err}");
         assert!(dir.join("file_1.txt").exists());
         assert!(!dir.parent().unwrap().join("evil.txt").exists());
@@ -213,7 +256,7 @@ mod tests {
         fs::create_dir(dir.join("sub")).unwrap();
 
         let r = renamer(r"file_\d", "sub/moved");
-        let err = r.rename_file(&dir.join("file_1.txt"), false).unwrap_err();
+        let err = r.plan_rename(&dir.join("file_1.txt")).unwrap_err();
         assert!(matches!(err, Error::RenameEscape(_)), "got: {err}");
         assert!(dir.join("file_1.txt").exists());
         assert!(!dir.join("sub").join("moved.txt").exists());
@@ -229,7 +272,7 @@ mod tests {
         // to_str().unwrap() before any filesystem access.
         let path = Path::new(OsStr::from_bytes(b"\xff\xfe.txt"));
         let r = renamer(".", "x");
-        assert!(matches!(r.rename_file(path, false), Ok(None)));
+        assert!(matches!(r.plan_rename(path), Ok(None)));
     }
 
     #[test]
@@ -261,5 +304,42 @@ mod tests {
         ];
         contents.sort();
         assert_eq!(contents, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn test_run_rename_parallel_collision_never_loses_data() {
+        // Regression for the TOCTOU race: with default (multi-threaded)
+        // workers, the old per-file exists() check let both files pass before
+        // either rename ran, so one file's content was silently destroyed in
+        // most runs. The plan phase must catch the duplicate target no matter
+        // how many workers execute the renames.
+        for _ in 0..10 {
+            let temp_dir = TempDir::new().unwrap();
+            let dir = temp_dir.path();
+            fs::write(dir.join("file_1.txt"), "one").unwrap();
+            fs::write(dir.join("file_2.txt"), "two").unwrap();
+
+            let result = run_rename(
+                dir.to_path_buf(),
+                r"file_\d".to_string(),
+                "merged".to_string(),
+                false, // dry_run
+                false, // verbose
+                None,  // default worker count
+            );
+            assert!(matches!(result, Err(Error::RenameFailed(1))));
+
+            let survivors: Vec<_> = ["file_1.txt", "file_2.txt"]
+                .iter()
+                .filter(|name| dir.join(name).exists())
+                .collect();
+            assert_eq!(survivors.len(), 1);
+            let mut contents = vec![
+                fs::read_to_string(dir.join("merged.txt")).unwrap(),
+                fs::read_to_string(dir.join(survivors[0])).unwrap(),
+            ];
+            contents.sort();
+            assert_eq!(contents, vec!["one", "two"]);
+        }
     }
 }

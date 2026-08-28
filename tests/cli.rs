@@ -476,3 +476,43 @@ fn rename_collision_keeps_both_files_and_exits_nonzero() {
         "no file content may be lost in a collision"
     );
 }
+
+#[test]
+fn rename_collision_with_default_workers_never_loses_data() {
+    // Audit C3 verify-repro: with default (parallel) workers, the old
+    // per-file existence check was a check-then-rename race — both files
+    // passed it before either rename ran, and one file's content was
+    // silently destroyed in most runs. Loop to catch a reintroduced race.
+    for _ in 0..10 {
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path();
+        fs::write(dir.join("file_1.txt"), "content ONE").unwrap();
+        fs::write(dir.join("file_2.txt"), "content TWO").unwrap();
+
+        ob().arg("rename")
+            .arg("-d")
+            .arg(dir)
+            .arg("-p")
+            .arg(r"file_\d")
+            .arg("-r")
+            .arg("merged")
+            .assert()
+            .failure();
+
+        let survivors: Vec<&Path> = [Path::new("file_1.txt"), Path::new("file_2.txt")]
+            .into_iter()
+            .filter(|n| dir.join(n).exists())
+            .collect();
+        assert_eq!(survivors.len(), 1, "exactly one original may be renamed");
+        let mut contents = vec![
+            fs::read_to_string(dir.join("merged.txt")).unwrap(),
+            fs::read_to_string(dir.join(survivors[0])).unwrap(),
+        ];
+        contents.sort();
+        assert_eq!(
+            contents,
+            ["content ONE", "content TWO"],
+            "no file content may be lost under parallel execution"
+        );
+    }
+}
