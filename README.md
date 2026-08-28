@@ -310,7 +310,7 @@ Options:
 - `-p, --pattern <PATTERN>` - Regex pattern to match filenames
 - `-r, --replacement <TEXT>` - Replacement string
 - `--dry-run` - Preview changes without applying
-- `-w, --workers <N>` - Number of threads to use
+- `-w, --workers <N>` - Accepted for compatibility; renames always execute serially so collision checks cannot race
 
 ## Performance
 

@@ -504,10 +504,11 @@ fn rename_collision_keeps_both_files_and_exits_nonzero() {
 
 #[test]
 fn rename_collision_with_default_workers_never_loses_data() {
-    // Audit C3 verify-repro: with default (parallel) workers, the old
-    // per-file existence check was a check-then-rename race — both files
-    // passed it before either rename ran, and one file's content was
-    // silently destroyed in most runs. Loop to catch a reintroduced race.
+    // Audit C3 verify-repro: under the old parallel execution, the per-file
+    // existence check was a check-then-rename race — both files passed it
+    // before either rename ran, and one file's content was silently destroyed
+    // in most runs. Renames now execute serially with duplicate targets
+    // rejected at plan time; loop to catch a reintroduced race.
     for _ in 0..10 {
         let temp = TempDir::new().unwrap();
         let dir = temp.path();

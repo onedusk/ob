@@ -267,7 +267,7 @@ pub enum Commands {
         #[arg(short, long)]
         verbose: bool,
 
-        /// The number of parallel worker threads to use.
+        /// Accepted for compatibility; renames always execute serially so collision checks cannot race.
         #[arg(short, long)]
         workers: Option<usize>,
     },
