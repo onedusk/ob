@@ -2,6 +2,8 @@
 name = "oober"
 version = "0.1.1"
 edition = "2024"
+rust-version = "1.85"
+description = "High-performance regex pattern scanning and replacement CLI with backups and undo"
 
 [dependencies]
 ignore = "0.4"

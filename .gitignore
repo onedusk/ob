@@ -1,7 +1,6 @@
 /target
 config/internal/
 docs/internal/
-Cargo.lock
 .claude/
 .ctxt/
 .DS_Store
