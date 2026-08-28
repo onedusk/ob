@@ -245,6 +245,38 @@ impl Scanner {
     }
 }
 
+/// Options for [`run_scan`], mirroring the flags of the `scan` subcommand.
+pub struct ScanOptions {
+    /// Path to the YAML file defining the scan patterns.
+    pub patterns_file: PathBuf,
+    /// Inline regexes; when non-empty, the patterns file is ignored.
+    pub inline_patterns: Vec<String>,
+    /// Output file path. `None` writes to standard output.
+    pub output: Option<PathBuf>,
+    /// File extensions to include. Empty means all files.
+    pub extensions: Vec<String>,
+    /// The input files or directories to scan.
+    pub inputs: Vec<PathBuf>,
+    /// Worker thread count. `None` uses the number of logical CPU cores.
+    pub workers: Option<usize>,
+    /// Only re-scan files that changed since the cached state.
+    pub incremental: bool,
+    /// Force a full re-scan, ignoring any cached results.
+    pub force_full: bool,
+    /// Clear the cache before scanning.
+    pub clear_cache: bool,
+    /// Use content hashes instead of timestamps for change detection.
+    pub content_hash: bool,
+    /// The output format for the scan results.
+    pub format: OutputFormat,
+    /// Append a summary of scan statistics (text format only).
+    pub include_summary: bool,
+    /// Include hidden files and directories.
+    pub hidden: bool,
+    /// Do not honor .gitignore/.ignore files.
+    pub no_ignore: bool,
+}
+
 /// The main entry point for the `scan` command.
 ///
 /// This function handles:
@@ -253,24 +285,24 @@ impl Scanner {
 /// 3. Iterating through the input paths and dispatching to the appropriate
 ///    `Scanner` methods (for files or directories).
 /// 4. Writing the results.
-// TODO: collapse these arguments into an options struct (pending refactor, audit A3).
-#[allow(clippy::too_many_arguments)]
-pub fn run_scan(
-    patterns_file: PathBuf,
-    inline_patterns: Vec<String>,
-    output: Option<PathBuf>,
-    extensions: Vec<String>,
-    inputs: Vec<PathBuf>,
-    workers: Option<usize>,
-    incremental: bool,
-    force_full: bool,
-    clear_cache: bool,
-    content_hash: bool,
-    format: OutputFormat,
-    include_summary: bool,
-    hidden: bool,
-    no_ignore: bool,
-) -> Result<()> {
+pub fn run_scan(options: ScanOptions) -> Result<()> {
+    let ScanOptions {
+        patterns_file,
+        inline_patterns,
+        output,
+        extensions,
+        inputs,
+        workers,
+        incremental,
+        force_full,
+        clear_cache,
+        content_hash,
+        format,
+        include_summary,
+        hidden,
+        no_ignore,
+    } = options;
+
     // A summary is only rendered for the text format; reject the combination
     // instead of silently ignoring the flag.
     if include_summary && !matches!(format, OutputFormat::Text) {
@@ -670,28 +702,30 @@ mod tests {
     fn test_summary_with_non_text_format_is_rejected() {
         let temp_dir = TempDir::new().unwrap();
 
+        let options = |format| ScanOptions {
+            patterns_file: PathBuf::from("patterns.yaml"),
+            inline_patterns: vec!["TODO".to_string()],
+            output: None,
+            extensions: vec![],
+            inputs: vec![temp_dir.path().to_path_buf()],
+            workers: Some(1),
+            incremental: false,
+            force_full: false,
+            clear_cache: false,
+            content_hash: false,
+            format,
+            include_summary: true,
+            hidden: false,
+            no_ignore: false,
+        };
+
         for format in [
             OutputFormat::Json,
             OutputFormat::Csv,
             OutputFormat::Sarif,
             OutputFormat::Html,
         ] {
-            let result = run_scan(
-                PathBuf::from("patterns.yaml"),
-                vec!["TODO".to_string()],
-                None,
-                vec![],
-                vec![temp_dir.path().to_path_buf()],
-                Some(1),
-                false, // incremental
-                false, // force_full
-                false, // clear_cache
-                false, // content_hash
-                format,
-                true, // --summary
-                false,
-                false,
-            );
+            let result = run_scan(options(format));
             let err = result.expect_err("--summary must be rejected for non-text formats");
             assert!(
                 err.to_string().contains("--summary"),
@@ -700,23 +734,7 @@ mod tests {
         }
 
         // --summary with the text format must remain valid.
-        run_scan(
-            PathBuf::from("patterns.yaml"),
-            vec!["TODO".to_string()],
-            None,
-            vec![],
-            vec![temp_dir.path().to_path_buf()],
-            Some(1),
-            false,
-            false,
-            false,
-            false,
-            OutputFormat::Text,
-            true,
-            false,
-            false,
-        )
-        .unwrap();
+        run_scan(options(OutputFormat::Text)).unwrap();
     }
 
     #[cfg(unix)]

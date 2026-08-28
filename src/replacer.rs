@@ -25,6 +25,7 @@ pub struct Replacer {
 }
 
 /// Options for processing a file.
+#[derive(Clone, Copy)]
 pub struct ProcessOptions {
     /// If `true`, a `.bak` file will be created before modifying a file.
     /// An existing `.bak` is never overwritten, so the oldest backup always
@@ -284,6 +285,32 @@ impl Replacer {
     }
 }
 
+/// Options for [`run_replace`], mirroring the flags of the `replace` subcommand.
+pub struct ReplaceOptions {
+    /// A built-in preset to use for replacement.
+    pub preset: Option<Preset>,
+    /// Path to a YAML configuration file with replacement rules.
+    pub config_file: Option<PathBuf>,
+    /// A single regex pattern to search for.
+    pub pattern: Option<String>,
+    /// The replacement string for `pattern`.
+    pub replacement: Option<String>,
+    /// The directory to process.
+    pub dir: PathBuf,
+    /// File extensions to include. Empty means all files.
+    pub extensions: Vec<String>,
+    /// Directory names to exclude.
+    pub exclude: Vec<String>,
+    /// Disable the creation of `.bak` backup files.
+    pub no_backup: bool,
+    /// Preview the changes without modifying any files.
+    pub dry_run: bool,
+    /// Print each modified file.
+    pub verbose: bool,
+    /// Worker thread count. `None` uses the number of logical CPU cores.
+    pub workers: Option<usize>,
+}
+
 /// The main entry point for the `replace` command.
 ///
 /// This function orchestrates the entire replacement process:
@@ -291,21 +318,21 @@ impl Replacer {
 /// 2. It walks the target directory to find all files to be processed.
 /// 3. It uses a Rayon thread pool to process the files in parallel.
 /// 4. It collects and prints summary statistics.
-// TODO: collapse these arguments into an options struct (pending refactor, audit A3).
-#[allow(clippy::too_many_arguments)]
-pub fn run_replace(
-    preset: Option<Preset>,
-    config_file: Option<PathBuf>,
-    pattern: Option<String>,
-    replacement: Option<String>,
-    dir: PathBuf,
-    extensions: Vec<String>,
-    exclude: Vec<String>,
-    no_backup: bool,
-    dry_run: bool,
-    verbose: bool,
-    workers: Option<usize>,
-) -> Result<()> {
+pub fn run_replace(options: ReplaceOptions) -> Result<()> {
+    let ReplaceOptions {
+        preset,
+        config_file,
+        pattern,
+        replacement,
+        dir,
+        extensions,
+        exclude,
+        no_backup,
+        dry_run,
+        verbose,
+        workers,
+    } = options;
+
     // Load or create config
     let config = if let Some(preset_type) = preset {
         // Use built-in preset
@@ -395,7 +422,7 @@ pub fn run_replace(
     pool.install(|| {
         all_files
             .par_iter()
-            .for_each(|path| match replacer.process_file(path, options.clone()) {
+            .for_each(|path| match replacer.process_file(path, options) {
                 Ok(result) => {
                     processed.fetch_add(1, Ordering::Relaxed);
                     if result.modified {
@@ -500,15 +527,6 @@ pub fn run_clean_backups(dir: PathBuf, dry_run: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-impl Clone for ProcessOptions {
-    fn clone(&self) -> Self {
-        Self {
-            create_backup: self.create_backup,
-            dry_run: self.dry_run,
-        }
-    }
 }
 
 /// Returns the line ending used by `content`: `"\r\n"` if any CRLF ending is
@@ -676,19 +694,19 @@ mod tests {
         )
         .unwrap();
 
-        let result = run_replace(
-            None,
-            Some(config_path),
-            None,
-            None,
-            dir.to_path_buf(),
-            vec![],
-            vec![],
-            false, // no_backup: backups enabled, none should be created
-            false, // dry_run
-            false, // verbose
-            Some(1),
-        );
+        let result = run_replace(ReplaceOptions {
+            preset: None,
+            config_file: Some(config_path),
+            pattern: None,
+            replacement: None,
+            dir: dir.to_path_buf(),
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: false, // backups enabled, none should be created
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        });
 
         assert!(result.is_err(), "mismatched config must be a hard error");
         assert_eq!(
@@ -713,19 +731,19 @@ mod tests {
         )
         .unwrap();
 
-        run_replace(
-            None,
-            Some(config_path),
-            None,
-            None,
-            dir.to_path_buf(),
-            vec!["py".to_string()], // explicit -x must win over the config's [js]
-            vec![],
-            true,  // no_backup
-            false, // dry_run
-            false, // verbose
-            Some(1),
-        )
+        run_replace(ReplaceOptions {
+            preset: None,
+            config_file: Some(config_path),
+            pattern: None,
+            replacement: None,
+            dir: dir.to_path_buf(),
+            extensions: vec!["py".to_string()], // explicit -x must win over the config's [js]
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
         .unwrap();
 
         assert_eq!(
@@ -756,19 +774,20 @@ mod tests {
         )
         .unwrap();
 
-        run_replace(
-            None,
-            Some(config_path),
-            None,
-            None,
-            dir.to_path_buf(),
-            vec!["txt".to_string()],
-            vec!["generated".to_string()], // explicit --exclude must win over the config's [vendor]
-            true,                          // no_backup
-            false,                         // dry_run
-            false,                         // verbose
-            Some(1),
-        )
+        run_replace(ReplaceOptions {
+            preset: None,
+            config_file: Some(config_path),
+            pattern: None,
+            replacement: None,
+            dir: dir.to_path_buf(),
+            extensions: vec!["txt".to_string()],
+            // explicit --exclude must win over the config's [vendor]
+            exclude: vec!["generated".to_string()],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
         .unwrap();
 
         assert_eq!(
@@ -993,19 +1012,19 @@ mod tests {
         let binary_content = b"alpha\x00\xff\xfe\x00binary".to_vec();
         fs::write(&binary, &binary_content).unwrap();
 
-        let result = run_replace(
-            None,
-            None,
-            Some("alpha".into()),
-            Some("beta".into()),
-            dir.to_path_buf(),
-            vec![],
-            vec![],
-            true,  // no_backup
-            false, // dry_run
-            false, // verbose
-            Some(1),
-        );
+        let result = run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("alpha".into()),
+            replacement: Some("beta".into()),
+            dir: dir.to_path_buf(),
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        });
 
         assert!(
             result.is_ok(),
@@ -1036,19 +1055,19 @@ mod tests {
         fs::write(&locked, "alpha two\n").unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
 
-        let result = run_replace(
-            None,
-            None,
-            Some("alpha".into()),
-            Some("beta".into()),
-            dir.to_path_buf(),
-            vec![],
-            vec![],
-            true,  // no_backup
-            false, // dry_run
-            false, // verbose
-            Some(1),
-        );
+        let result = run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("alpha".into()),
+            replacement: Some("beta".into()),
+            dir: dir.to_path_buf(),
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        });
 
         // Restore permissions before asserting so TempDir cleanup succeeds.
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
@@ -1082,7 +1101,7 @@ mod tests {
 
         // First pass: alpha -> beta.
         let first = single_pattern_replacer("alpha", "beta");
-        assert!(first.process_file(&file, options.clone()).unwrap().modified);
+        assert!(first.process_file(&file, options).unwrap().modified);
         assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
 
         // Second pass: beta -> gamma. The existing backup must be preserved.

@@ -103,9 +103,9 @@ fn main() -> Result<()> {
             hidden,
             no_ignore,
             inputs,
-        } => scanner::run_scan(
-            patterns,
-            regex,
+        } => scanner::run_scan(scanner::ScanOptions {
+            patterns_file: patterns,
+            inline_patterns: regex,
             output,
             extensions,
             inputs,
@@ -118,7 +118,7 @@ fn main() -> Result<()> {
             include_summary,
             hidden,
             no_ignore,
-        ),
+        }),
         Commands::Replace {
             preset,
             config,
@@ -131,9 +131,9 @@ fn main() -> Result<()> {
             dry_run,
             verbose,
             workers,
-        } => replacer::run_replace(
+        } => replacer::run_replace(replacer::ReplaceOptions {
             preset,
-            config,
+            config_file: config,
             pattern,
             replacement,
             dir,
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
             dry_run,
             verbose,
             workers,
-        ),
+        }),
         Commands::Undo { dir, keep_backups } => replacer::run_undo(dir, keep_backups),
         Commands::CleanBackups { dir, dry_run } => replacer::run_clean_backups(dir, dry_run),
         Commands::Rename {
