@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrected `scan` help text to state it uses `./patterns.yaml` instead of the misleading "default patterns" wording, and added `-e` usage examples.
 - All docs now agree on `null` replacement semantics: a `null` entry deletes the line *after* each match, and the matching line itself is kept (unchanged behavior). The CLI help previously claimed "delete line", the README "delete the matched line", and the config docs "no replacement" — three contradictory descriptions of one behavior.
 
+### Performance
+
+- Incremental change detection now compares file metadata first and computes the content hash only when sizes match: with `--incremental --content-hash`, a file whose size changed is no longer read and hashed just to be declared changed.
+
 ### Fixed
 
 - `replace` now gives explicitly-passed `-x`/`--ext` and `-e`/`--exclude` CLI flags precedence over the config file's `extensions`/`exclude` lists. Previously the config values silently overrode the CLI flags — inverted relative to the usual CLI > config convention — so e.g. `-x py` with a config declaring `extensions: [js]` still processed only `.js` files. Config values now apply only when the corresponding flag is not given.
