@@ -187,21 +187,24 @@ impl Replacer {
                 }
             } else {
                 // Delete lines after pattern
-                // `lines()` strips `\r`, so detect the line ending up front and
-                // rejoin with it to keep CRLF files CRLF.
-                let line_ending = detect_line_ending(new_content.as_ref());
-                let mut new_lines = Vec::new();
+                // Rebuild from `split_inclusive` segments so every kept line
+                // keeps its own terminator (LF or CRLF) byte-for-byte — files
+                // can mix endings, so a single detected ending would rewrite
+                // lines it never touched. Terminators are stripped only for
+                // matching, mirroring `lines()`.
+                let mut kept = String::with_capacity(new_content.len());
                 let mut skip_next = false;
                 let mut removed = 0;
 
-                for line in new_content.lines() {
+                for segment in new_content.split_inclusive('\n') {
                     if skip_next {
                         removed += 1;
                         skip_next = false;
                         continue;
                     }
-                    new_lines.push(line);
-                    // Check if line matches the pattern (convert pattern to string for simple matching)
+                    kept.push_str(segment);
+                    let line = segment.strip_suffix('\n').unwrap_or(segment);
+                    let line = line.strip_suffix('\r').unwrap_or(line);
                     if pattern.is_match(line) {
                         skip_next = true;
                     }
@@ -209,11 +212,7 @@ impl Replacer {
 
                 if removed > 0 {
                     total_changes += removed;
-                    let mut joined = new_lines.join(line_ending);
-                    if !joined.ends_with('\n') && content.ends_with('\n') {
-                        joined.push_str(line_ending);
-                    }
-                    new_content = Cow::Owned(joined);
+                    new_content = Cow::Owned(kept);
                 }
             }
         }
@@ -688,76 +687,34 @@ fn dry_run_preview(old: &str, new: &str) -> String {
     out
 }
 
-/// Returns the line ending used by `content`: `"\r\n"` if any CRLF ending is
-/// present, `"\n"` otherwise. Used to rebuild content split with `lines()`
-/// (which strips `\r`) without converting CRLF files to LF.
-fn detect_line_ending(content: &str) -> &'static str {
-    if content.contains("\r\n") {
-        "\r\n"
-    } else {
-        "\n"
-    }
-}
-
 /// Cleans up excessive empty lines from a string.
 ///
 /// This is a heuristic to improve formatting after blocks of code have been removed.
-/// It collapses multiple empty lines and removes leading/trailing empty lines.
-/// The content's line ending style (LF or CRLF) is preserved.
+/// It collapses runs of empty lines to a single one and removes leading and
+/// trailing empty lines. Content is rebuilt from `split_inclusive` segments so
+/// every kept line keeps its own terminator (LF or CRLF) byte-for-byte, even
+/// in files that mix endings.
 fn clean_empty_lines(content: &str) -> String {
-    let line_ending = detect_line_ending(content);
+    let mut output = String::with_capacity(content.len());
+    // First empty line of the current run; flushed only when more content
+    // follows, so trailing empty lines are dropped.
+    let mut pending_empty: Option<&str> = None;
+    let mut seen_content = false;
 
-    // First pass: collapse multiple consecutive empty lines to at most 2
-    let lines: Vec<&str> = content.lines().collect();
-    let mut result = Vec::new();
-    let mut consecutive_empty = 0;
-
-    for line in lines.iter() {
+    for segment in content.split_inclusive('\n') {
+        let line = segment.strip_suffix('\n').unwrap_or(segment);
+        let line = line.strip_suffix('\r').unwrap_or(line);
         if line.trim().is_empty() {
-            consecutive_empty += 1;
-            // Keep up to 2 empty lines
-            if consecutive_empty <= 2 {
-                result.push(*line);
+            if seen_content && pending_empty.is_none() {
+                pending_empty = Some(segment);
             }
         } else {
-            // Reset counter and add the line
-            consecutive_empty = 0;
-            result.push(*line);
-        }
-    }
-
-    // Second pass: handle beginning of file
-    let mut start_idx = 0;
-    for (i, line) in result.iter().enumerate() {
-        if !line.trim().is_empty() {
-            start_idx = i;
-            break;
-        }
-    }
-
-    // Remove all empty lines at the beginning
-    let result: Vec<&str> = result[start_idx..].to_vec();
-
-    // Third pass: ensure no more than one empty line between content
-    let mut final_result = Vec::new();
-    let mut last_was_empty = false;
-
-    for line in result {
-        if line.trim().is_empty() {
-            if !last_was_empty {
-                final_result.push(line);
-                last_was_empty = true;
+            if let Some(empty) = pending_empty.take() {
+                output.push_str(empty);
             }
-        } else {
-            final_result.push(line);
-            last_was_empty = false;
+            output.push_str(segment);
+            seen_content = true;
         }
-    }
-
-    // Join with newlines and preserve the final newline if it existed
-    let mut output = final_result.join(line_ending);
-    if content.ends_with('\n') && !output.ends_with('\n') {
-        output.push_str(line_ending);
     }
 
     output
@@ -1076,6 +1033,43 @@ mod tests {
     }
 
     #[test]
+    fn test_null_replacement_line_deletion_preserves_mixed_line_endings() {
+        // Verified failure: one CRLF line anywhere made detect_line_ending
+        // declare the whole file CRLF, so the rebuild converted every LF
+        // line to CRLF. Each kept line must keep its own ending
+        // byte-for-byte; only the deleted line disappears.
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        fs::write(&file, "one\ntwo\r\nMARKER\ndelete me\nfive\n").unwrap();
+
+        let replacer = Replacer::new(ReplaceConfig {
+            patterns: vec!["MARKER".into()],
+            replacements: vec![None],
+            blocks: vec![],
+            extensions: None,
+            exclude: None,
+        })
+        .unwrap();
+
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.changes, 1);
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "one\ntwo\r\nMARKER\nfive\n",
+            "mostly-LF file must not come back CRLF after a null-replacement deletion"
+        );
+    }
+
+    #[test]
     fn test_block_removal_and_cleanup_preserve_crlf() {
         use crate::config::Block;
 
@@ -1257,6 +1251,20 @@ mod tests {
         );
         // LF content stays LF.
         assert_eq!(clean_empty_lines("a\n\n\n\nb\n"), "a\n\nb\n");
+    }
+
+    #[test]
+    fn test_clean_empty_lines_preserves_mixed_line_endings() {
+        // Verified failure: one CRLF line made detect_line_ending rejoin
+        // the whole file with CRLF. Every kept line must keep its own
+        // ending byte-for-byte.
+        assert_eq!(
+            clean_empty_lines("a\ntwo\r\n\n\r\n\nb\n"),
+            "a\ntwo\r\n\nb\n",
+            "collapsing empty lines must not rewrite untouched lines' endings"
+        );
+        // Leading and trailing empty lines are removed either way.
+        assert_eq!(clean_empty_lines("\r\n\na\r\nb\n\r\n\n"), "a\r\nb\n");
     }
 
     #[test]
