@@ -149,7 +149,7 @@ patterns:
 replacements:
   - "[TODO]"
   - "// console.log"
-  - null  # null means delete the next line
+  - null  # null means delete the line after each match (the matching line is kept)
 
 blocks:  # Multi-line blocks to remove
   - start: "/* DEBUG START */"

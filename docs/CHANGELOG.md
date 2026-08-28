@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Corrected `scan` help text to state it uses `./patterns.yaml` instead of the misleading "default patterns" wording, and added `-e` usage examples.
+- All docs now agree on `null` replacement semantics: a `null` entry deletes the line *after* each match, and the matching line itself is kept (unchanged behavior). The CLI help previously claimed "delete line", the README "delete the matched line", and the config docs "no replacement" — three contradictory descriptions of one behavior.
 
 ### Fixed
 

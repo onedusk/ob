@@ -26,7 +26,8 @@ pub struct ReplaceConfig {
     /// A list of regex patterns to search for.
     pub patterns: Vec<String>,
     /// A list of replacement strings. Each element corresponds to a pattern.
-    /// `None` can be used to indicate no replacement for a given pattern.
+    /// `None` (`null` in YAML) deletes the line *after* each line matching the
+    /// pattern; the matching line itself is kept.
     pub replacements: Vec<Option<String>>,
     /// A list of blocks to ignore during replacement.
     #[serde(default)]

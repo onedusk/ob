@@ -132,7 +132,7 @@ pub enum Commands {
     ///
     /// Config file format (config.yaml):
     ///   patterns: ['console\\.log', 'debugger;']
-    ///   replacements: ['// removed', null]  # null = delete line
+    ///   replacements: ['// removed', null]  # null = delete the line AFTER each match (the matching line is kept)
     ///   blocks:
     ///     - start: '/* DEBUG START */'
     ///       end: '/* DEBUG END */'

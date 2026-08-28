@@ -132,11 +132,11 @@ patterns:
   - "console\\.log"
   - "print\\(.*\\)"
 
-# Replacements (use null to delete the matched line)
+# Replacements (null deletes the line AFTER each match; the matching line is kept)
 replacements:
   - "[TODO]"
   - "// console.log"
-  - null  # null means delete the matched line
+  - null  # null means delete the line after each match
 
 # Multi-line blocks to remove
 blocks:
