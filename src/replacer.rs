@@ -2,7 +2,7 @@ use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
 use crate::patterns::load_preset;
-use crate::util::{normalize_extensions, resolve_workers, should_process_file};
+use crate::util::{is_backup_file, normalize_extensions, resolve_workers, should_process_file};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::{Captures, Regex};
@@ -412,7 +412,14 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
             .iter()
             .any(|ex| path.components().any(|c| c.as_os_str() == ex.as_str()));
 
-        if !should_exclude && path.is_file() && should_process_file(path, &exts) {
+        // Never process .bak backups: rewriting a backup's content (and
+        // stacking a .bak.bak on top) would make undo restore content the
+        // original file never held.
+        if !should_exclude
+            && path.is_file()
+            && !is_backup_file(path)
+            && should_process_file(path, &exts)
+        {
             all_files.push(path.to_path_buf());
         }
     }
@@ -1310,6 +1317,62 @@ mod tests {
         );
 
         // Undo restores the original content.
+        let stats = Replacer::undo(dir, false).unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+    }
+
+    #[test]
+    fn test_second_replace_run_skips_backup_files() {
+        // Verified failure: run_replace's file collection picked up the .bak
+        // files a previous run created, so a second run rewrote the backup's
+        // content in place and stacked an a.txt.bak.bak on top — and undo
+        // then "restored" content the file never contained.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("a.txt");
+        fs::write(&file, "alpha one\n").unwrap();
+
+        let run = |pattern: &str, replacement: &str| {
+            run_replace(ReplaceOptions {
+                preset: None,
+                config_file: None,
+                pattern: Some(pattern.into()),
+                replacement: Some(replacement.into()),
+                dir: dir.to_path_buf(),
+                extensions: vec![],
+                exclude: vec![],
+                no_backup: false,
+                dry_run: false,
+                verbose: false,
+                workers: Some(1),
+            })
+            .unwrap()
+        };
+
+        // First run: alpha -> beta, creating a.txt.bak with the original.
+        run("alpha", "beta");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+            "alpha one\n"
+        );
+
+        // Second run: alpha -> gamma. Only the backup still contains "alpha";
+        // it must be skipped, not rewritten.
+        run("alpha", "gamma");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+            "alpha one\n",
+            "a second replace run must not rewrite backup contents"
+        );
+        assert!(
+            !dir.join("a.txt.bak.bak").exists(),
+            "a second replace run must not create a backup of a backup"
+        );
+
+        // Undo restores the true original.
         let stats = Replacer::undo(dir, false).unwrap();
         assert_eq!(stats.restored, 1);
         assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");

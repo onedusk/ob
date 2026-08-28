@@ -1,4 +1,5 @@
 use crate::errors::{Error, Result};
+use crate::util::is_backup_file;
 use ignore::WalkBuilder;
 use regex::Regex;
 use std::collections::HashSet;
@@ -40,7 +41,9 @@ pub fn run_rename(
     for entry in walker.build() {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() {
+        // Never rename .bak backups: undo pairs each backup with its
+        // original by name, and a renamed backup breaks that pairing.
+        if path.is_file() && !is_backup_file(path) {
             all_files.push(path.to_path_buf());
         }
     }
@@ -529,6 +532,32 @@ mod tests {
         assert_eq!(dir_names(dir), vec!["ab.txt", "ba.txt"]);
         assert_eq!(fs::read_to_string(dir.join("ab.txt")).unwrap(), "BA");
         assert_eq!(fs::read_to_string(dir.join("ba.txt")).unwrap(), "AB");
+    }
+
+    #[test]
+    fn test_rename_skips_backup_files() {
+        // .bak backups belong to undo: renaming one would break the pairing
+        // between a backup and its original, so rename must leave them alone.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.txt"), "current").unwrap();
+        fs::write(dir.join("a.txt.bak"), "original").unwrap();
+
+        run_rename(
+            dir.to_path_buf(),
+            "^a".to_string(),
+            "b".to_string(),
+            false, // dry_run
+            false, // verbose
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(dir_names(dir), vec!["a.txt.bak", "b.txt"]);
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+            "original"
+        );
     }
 
     #[test]

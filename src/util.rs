@@ -18,6 +18,15 @@ pub fn should_process_file(path: &Path, extensions: &HashSet<String>) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns `true` if `path` is a `.bak` backup file.
+///
+/// `replace` and `rename` must never treat backups as ordinary input:
+/// rewriting or renaming a `.bak` file breaks `undo`'s guarantee that the
+/// oldest backup holds the pre-oober original.
+pub fn is_backup_file(path: &Path) -> bool {
+    path.extension().and_then(|os| os.to_str()) == Some("bak")
+}
+
 /// Normalizes user-supplied extensions (trim whitespace, strip a leading dot,
 /// lowercase, drop empty entries) into a set for O(1) lookups.
 pub fn normalize_extensions(extensions: &[String]) -> HashSet<String> {
@@ -67,6 +76,15 @@ mod tests {
         assert!(should_process_file(Path::new("a.JS"), &exts));
         assert!(!should_process_file(Path::new("a.py"), &exts));
         assert!(!should_process_file(&PathBuf::from("no_extension"), &exts));
+    }
+
+    #[test]
+    fn test_is_backup_file_matches_final_bak_extension_only() {
+        assert!(is_backup_file(Path::new("a.txt.bak")));
+        assert!(is_backup_file(Path::new("a.txt.bak.bak")));
+        assert!(!is_backup_file(Path::new("a.txt")));
+        assert!(!is_backup_file(Path::new("a.bak.txt")));
+        assert!(!is_backup_file(Path::new("bak")));
     }
 
     #[test]
