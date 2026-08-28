@@ -11,8 +11,18 @@ use std::process;
 
 /// The main function of the application.
 ///
-/// It parses arguments and executes the corresponding command.
-fn main() -> Result<()> {
+/// Errors from [`run`] are printed in their human-readable `Display` form;
+/// returning `Result` from `main` would print the Rust `Debug` form
+/// (e.g. `Error: RenameFailed(1)`).
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("Error: {e}");
+        process::exit(1);
+    }
+}
+
+/// Parses arguments and executes the corresponding command.
+fn run() -> Result<()> {
     // Check if no arguments provided (just 'ob' or 'oober')
     let args_vec: Vec<String> = env::args().collect();
     if args_vec.len() == 1 {

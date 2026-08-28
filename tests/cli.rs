@@ -222,6 +222,32 @@ fn scan_warns_and_continues_on_unreadable_file() {
 }
 
 #[test]
+fn errors_are_printed_in_display_form() {
+    // `main` returning Result printed errors in Debug form, e.g.
+    // `Error: Config("could not open ...")`; they must use Display.
+    let temp = TempDir::new().unwrap();
+    let missing = temp.path().join("no_such_patterns.yaml");
+
+    let assert = ob()
+        .arg("scan")
+        .arg("-p")
+        .arg(&missing)
+        .arg(temp.path())
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(contains(
+            "Error: Config error: could not open patterns file",
+        ));
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(
+        !stderr.contains("Config(\""),
+        "the Debug form must not surface: {stderr}"
+    );
+}
+
+#[test]
 fn incremental_scan_with_empty_xdg_cache_home_does_not_cache_in_project() {
     // A set-but-empty XDG_CACHE_HOME resolved the cache dir to the relative
     // "./oober", dropping a plaintext cache of matched lines (potentially
