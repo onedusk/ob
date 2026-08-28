@@ -128,7 +128,7 @@ The tool uses a subcommand architecture via `cli::Commands` enum:
 2. **File Walker**: `ignore` crate provides gitignore-aware traversal
 3. **Parallel Processing**: `rayon` enables multi-threaded file processing with configurable workers
 4. **Atomic Writes**: `tempfile` ensures safe file modifications via rename operations
-5. **Backup System**: Creates timestamped `.bak` files before modifications
+5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten, so the oldest backup preserves the original
 
 ### Pattern Configuration
 
@@ -243,7 +243,7 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 
 - The tool respects `.gitignore` files automatically via the `ignore` crate
 - Binary files are automatically skipped based on content detection
-- Backups are created as `.bak` files with timestamps before any modifications
+- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the oldest backup preserves the original)
 - Empty lines left after block removal are automatically cleaned up
 - Line-by-line processing means patterns cannot span multiple lines (use multiline blocks instead)
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)

@@ -35,6 +35,8 @@ pub struct BlockPattern {
 /// Options for processing a file.
 pub struct ProcessOptions {
     /// If `true`, a `.bak` file will be created before modifying a file.
+    /// An existing `.bak` is never overwritten, so the oldest backup always
+    /// preserves the pre-oober original.
     pub create_backup: bool,
     /// If `true`, changes will be calculated but not written to disk.
     pub dry_run: bool,
@@ -175,7 +177,11 @@ impl Replacer {
         if total_changes > 0 && !options.dry_run {
             if options.create_backup {
                 let backup_path = format!("{}.bak", path.display());
-                fs::copy(path, &backup_path)?;
+                // Never overwrite an existing backup: the oldest backup is the
+                // pre-oober original, which undo must be able to restore.
+                if !Path::new(&backup_path).exists() {
+                    fs::copy(path, &backup_path)?;
+                }
             }
 
             // Write atomically using tempfile
@@ -574,5 +580,50 @@ mod tests {
         run_clean_backups(dir.to_path_buf(), false).unwrap();
         assert!(!dir.join("b.txt.bak").exists());
         assert!(!dir.join(".env2.bak").exists());
+    }
+
+    fn single_pattern_replacer(pattern: &str, replacement: &str) -> Replacer {
+        Replacer::new(ReplaceConfig {
+            patterns: vec![pattern.into()],
+            replacements: vec![Some(replacement.into())],
+            blocks: vec![],
+            extensions: None,
+            exclude: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn test_repeated_replace_preserves_original_backup() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("t.txt");
+        fs::write(&file, "alpha one\n").unwrap();
+
+        let options = ProcessOptions {
+            create_backup: true,
+            dry_run: false,
+        };
+
+        // First pass: alpha -> beta.
+        let first = single_pattern_replacer("alpha", "beta");
+        assert!(first.process_file(&file, options.clone()).unwrap().modified);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+
+        // Second pass: beta -> gamma. The existing backup must be preserved.
+        let second = single_pattern_replacer("beta", "gamma");
+        assert!(second.process_file(&file, options).unwrap().modified);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "gamma one\n");
+
+        assert_eq!(
+            fs::read_to_string(dir.join("t.txt.bak")).unwrap(),
+            "alpha one\n",
+            "backup must keep the pre-oober original after repeated runs"
+        );
+
+        // Undo restores the original content.
+        let stats = Replacer::undo(dir, false).unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
     }
 }

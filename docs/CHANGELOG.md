@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scan` now names the missing patterns file in its error (with a hint to use `-e` or `-p`) instead of emitting a bare `Io(NotFound)`.
 - `undo` and `clean-backups` now find `.bak` files that are gitignored (e.g. `*.bak` in the target repo's `.gitignore`) or hidden; backup discovery previously applied the standard gitignore/hidden filters and reported "Backups found: 0" while backups existed.
+- `replace` no longer overwrites an existing `<file>.bak` on repeated runs; the oldest backup is preserved because it holds the pre-oober original, so `undo` restores the true original instead of an intermediate state. Docs claiming timestamped backups were corrected (backups never had timestamps).
 
 ---
 
