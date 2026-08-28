@@ -2,6 +2,7 @@ use crate::errors::Result;
 use crate::scanner::Match;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use std::borrow::Cow;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -147,11 +148,12 @@ impl OutputFormatter {
 
         // Write records
         for m in matches {
+            let content = guard_csv_formula(m.line_content.trim());
             wtr.write_record([
                 &m.pattern_name,
                 &m.file_path.display().to_string(),
                 &m.line_number.to_string(),
-                m.line_content.trim(),
+                &*content,
                 &self.get_severity(&m.pattern_name),
             ])?;
         }
@@ -476,6 +478,19 @@ impl OutputFormatter {
     }
 }
 
+/// Guards a CSV field against spreadsheet formula injection.
+///
+/// A field starting with `=`, `+`, `-`, or `@` is executed as a formula by
+/// Excel, Google Sheets, and LibreOffice when the CSV is opened. Matched line
+/// content comes from the scanned files, so such fields are prefixed with a
+/// single quote — the conventional spreadsheet "treat as text" marker.
+fn guard_csv_formula(field: &str) -> Cow<'_, str> {
+    match field.chars().next() {
+        Some('=' | '+' | '-' | '@') => Cow::Owned(format!("'{field}")),
+        _ => Cow::Borrowed(field),
+    }
+}
+
 /// Escapes a string for safe inclusion in HTML.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -535,6 +550,64 @@ mod tests {
             .collect::<std::result::Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn test_guard_csv_formula_prefixes_only_leading_formula_chars() {
+        for field in ["=x", "+x", "-x", "@x"] {
+            assert_eq!(guard_csv_formula(field), format!("'{field}"));
+        }
+        assert_eq!(guard_csv_formula("x = y"), "x = y");
+        assert_eq!(guard_csv_formula(""), "");
+    }
+
+    #[test]
+    fn test_csv_formula_injection_is_neutralized() {
+        let formatter = OutputFormatter::new(OutputFormat::Csv, false);
+        let matches = vec![
+            Match {
+                pattern_name: "cmd".to_string(),
+                file_path: PathBuf::from("evil.csv"),
+                line_number: 1,
+                line_content: "=HYPERLINK(\"http://evil\",\"click\")".to_string(),
+            },
+            Match {
+                pattern_name: "cmd".to_string(),
+                file_path: PathBuf::from("evil.csv"),
+                line_number: 2,
+                // Leading whitespace is trimmed before the guard applies.
+                line_content: "  @SUM(1,2)".to_string(),
+            },
+            Match {
+                pattern_name: "cmd".to_string(),
+                file_path: PathBuf::from("ok.txt"),
+                line_number: 3,
+                line_content: "plain = safe".to_string(),
+            },
+        ];
+
+        let output = formatter.format_csv(&matches).unwrap();
+        let mut rdr = csv::Reader::from_reader(output.as_bytes());
+        let records: Vec<_> = rdr
+            .records()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            records[0].get(3),
+            Some("'=HYPERLINK(\"http://evil\",\"click\")"),
+            "leading = must be neutralized"
+        );
+        assert_eq!(
+            records[1].get(3),
+            Some("'@SUM(1,2)"),
+            "leading @ must be neutralized"
+        );
+        assert_eq!(
+            records[2].get(3),
+            Some("plain = safe"),
+            "an interior = must be left alone"
+        );
     }
 
     #[test]
