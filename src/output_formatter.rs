@@ -146,15 +146,19 @@ impl OutputFormatter {
         // Write header
         wtr.write_record(["Pattern", "File", "Line", "Content", "Severity"])?;
 
-        // Write records
+        // Write records. Every string field is guarded, not just the matched
+        // content: a scanned file or pattern named "=HYPERLINK(...)" injects
+        // through its column just as well.
         for m in matches {
-            let content = guard_csv_formula(m.line_content.trim());
+            let file = m.file_path.display().to_string();
+            let line = m.line_number.to_string();
+            let severity = self.get_severity(&m.pattern_name);
             wtr.write_record([
-                &m.pattern_name,
-                &m.file_path.display().to_string(),
-                &m.line_number.to_string(),
-                &*content,
-                &self.get_severity(&m.pattern_name),
+                &*guard_csv_formula(&m.pattern_name),
+                &*guard_csv_formula(&file),
+                line.as_str(),
+                &*guard_csv_formula(m.line_content.trim()),
+                &*guard_csv_formula(&severity),
             ])?;
         }
 
@@ -509,8 +513,9 @@ fn sarif_uri(path: &Path) -> String {
 ///
 /// A field starting with `=`, `+`, `-`, or `@` is executed as a formula by
 /// Excel, Google Sheets, and LibreOffice when the CSV is opened. Matched line
-/// content comes from the scanned files, so such fields are prefixed with a
-/// single quote — the conventional spreadsheet "treat as text" marker.
+/// content, file names, and pattern names all come from scanned input, so such
+/// fields are prefixed with a single quote — the conventional spreadsheet
+/// "treat as text" marker.
 fn guard_csv_formula(field: &str) -> Cow<'_, str> {
     match field.chars().next() {
         Some('=' | '+' | '-' | '@') => Cow::Owned(format!("'{field}")),
@@ -611,6 +616,15 @@ mod tests {
                 line_number: 3,
                 line_content: "plain = safe".to_string(),
             },
+            // The guard must cover every string field, not just Content: a
+            // scanned file or pattern named like a formula injects through
+            // its own column.
+            Match {
+                pattern_name: "=cmd".to_string(),
+                file_path: PathBuf::from("=HYPERLINK(evil).txt"),
+                line_number: 4,
+                line_content: "harmless".to_string(),
+            },
         ];
 
         let output = formatter.format_csv(&matches).unwrap();
@@ -634,6 +648,21 @@ mod tests {
             records[2].get(3),
             Some("plain = safe"),
             "an interior = must be left alone"
+        );
+        assert_eq!(
+            records[3].get(0),
+            Some("'=cmd"),
+            "a formula-shaped pattern name must be neutralized"
+        );
+        assert_eq!(
+            records[3].get(1),
+            Some("'=HYPERLINK(evil).txt"),
+            "a formula-shaped file name must be neutralized"
+        );
+        assert_eq!(
+            records[2].get(1),
+            Some("ok.txt"),
+            "an ordinary file name must be left alone"
         );
     }
 
