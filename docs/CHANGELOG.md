@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `undo` and `clean-backups` now find `.bak` files that are gitignored (e.g. `*.bak` in the target repo's `.gitignore`) or hidden; backup discovery previously applied the standard gitignore/hidden filters and reported "Backups found: 0" while backups existed.
 - `replace` no longer overwrites an existing `<file>.bak` on repeated runs; the oldest backup is preserved because it holds the pre-oober original, so `undo` restores the true original instead of an intermediate state. Docs claiming timestamped backups were corrected (backups never had timestamps).
 - `replace` now rejects a config whose `replacements` list is a different length than `patterns`. Previously, missing entries were silently padded with `null` — which means "delete the line after each match" — so an innocent config omission destructively deleted unrelated lines. The error names both lengths; to delete lines intentionally, write an explicit `null` entry.
+- `replace` no longer converts CRLF files to LF. The `null`-replacement line-deletion path and the empty-line cleanup after block removal rebuilt files with `\n` regardless of the original line endings, rewriting every line of Windows-encoded files; both paths now detect and preserve the file's line ending style, including the trailing newline.
 
 ---
 

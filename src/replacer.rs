@@ -152,6 +152,9 @@ impl Replacer {
                 }
             } else {
                 // Delete lines after pattern
+                // `lines()` strips `\r`, so detect the line ending up front and
+                // rejoin with it to keep CRLF files CRLF.
+                let line_ending = detect_line_ending(new_content.as_ref());
                 let mut new_lines = Vec::new();
                 let mut skip_next = false;
                 let mut removed = 0;
@@ -171,9 +174,9 @@ impl Replacer {
 
                 if removed > 0 {
                     total_changes += removed;
-                    let mut joined = new_lines.join("\n");
+                    let mut joined = new_lines.join(line_ending);
                     if !joined.ends_with('\n') && content.ends_with('\n') {
-                        joined.push('\n');
+                        joined.push_str(line_ending);
                     }
                     new_content = Cow::Owned(joined);
                 }
@@ -481,11 +484,25 @@ fn should_process_file(path: &Path, extensions: &[String]) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns the line ending used by `content`: `"\r\n"` if any CRLF ending is
+/// present, `"\n"` otherwise. Used to rebuild content split with `lines()`
+/// (which strips `\r`) without converting CRLF files to LF.
+fn detect_line_ending(content: &str) -> &'static str {
+    if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
 /// Cleans up excessive empty lines from a string.
 ///
 /// This is a heuristic to improve formatting after blocks of code have been removed.
 /// It collapses multiple empty lines and removes leading/trailing empty lines.
+/// The content's line ending style (LF or CRLF) is preserved.
 fn clean_empty_lines(content: &str) -> String {
+    let line_ending = detect_line_ending(content);
+
     // First pass: collapse multiple consecutive empty lines to at most 2
     let lines: Vec<&str> = content.lines().collect();
     let mut result = Vec::new();
@@ -534,9 +551,9 @@ fn clean_empty_lines(content: &str) -> String {
     }
 
     // Join with newlines and preserve the final newline if it existed
-    let mut output = final_result.join("\n");
+    let mut output = final_result.join(line_ending);
     if content.ends_with('\n') && !output.ends_with('\n') {
-        output.push('\n');
+        output.push_str(line_ending);
     }
 
     output
@@ -655,6 +672,91 @@ mod tests {
             exclude: None,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn test_null_replacement_line_deletion_preserves_crlf() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        fs::write(&file, "one\r\nMARKER\r\ndelete me\r\nfour\r\n").unwrap();
+
+        let replacer = Replacer::new(ReplaceConfig {
+            patterns: vec!["MARKER".into()],
+            replacements: vec![None],
+            blocks: vec![],
+            extensions: None,
+            exclude: None,
+        })
+        .unwrap();
+
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(result.changes, 1);
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "one\r\nMARKER\r\nfour\r\n",
+            "remaining lines must stay CRLF-terminated after a null-replacement deletion"
+        );
+    }
+
+    #[test]
+    fn test_block_removal_and_cleanup_preserve_crlf() {
+        use crate::config::Block;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        fs::write(
+            &file,
+            "keep one\r\n/* DEBUG START */\r\ndebug stuff\r\n/* DEBUG END */\r\nkeep two\r\n",
+        )
+        .unwrap();
+
+        let replacer = Replacer::new(ReplaceConfig {
+            patterns: vec![],
+            replacements: vec![],
+            blocks: vec![Block {
+                start: "/* DEBUG START */".into(),
+                end: "/* DEBUG END */".into(),
+            }],
+            extensions: None,
+            exclude: None,
+        })
+        .unwrap();
+
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert!(result.modified);
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "keep one\r\n\r\nkeep two\r\n",
+            "block removal + empty-line cleanup must stay CRLF-terminated"
+        );
+    }
+
+    #[test]
+    fn test_clean_empty_lines_preserves_crlf() {
+        assert_eq!(
+            clean_empty_lines("a\r\n\r\n\r\n\r\nb\r\n"),
+            "a\r\n\r\nb\r\n"
+        );
+        // LF content stays LF.
+        assert_eq!(clean_empty_lines("a\n\n\n\nb\n"), "a\n\nb\n");
     }
 
     #[test]
