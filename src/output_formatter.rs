@@ -64,17 +64,17 @@ impl OutputFormatter {
     /// * `matches` - The `Match` objects to format.
     pub fn write_output<W: Write>(&self, writer: &mut W, matches: &[Match]) -> Result<()> {
         let output = match self.format {
-            OutputFormat::Text => self.format_text(&matches)?,
-            OutputFormat::Json => self.format_json(&matches)?,
-            OutputFormat::Csv => self.format_csv(&matches)?,
-            OutputFormat::Sarif => self.format_sarif(&matches)?,
-            OutputFormat::Html => self.format_html(&matches)?,
+            OutputFormat::Text => self.format_text(matches)?,
+            OutputFormat::Json => self.format_json(matches)?,
+            OutputFormat::Csv => self.format_csv(matches)?,
+            OutputFormat::Sarif => self.format_sarif(matches)?,
+            OutputFormat::Html => self.format_html(matches)?,
         };
 
         writer.write_all(output.as_bytes())?;
 
         if self.include_summary && matches!(self.format, OutputFormat::Text) {
-            let summary = self.format_summary(&matches)?;
+            let summary = self.format_summary(matches)?;
             writer.write_all(summary.as_bytes())?;
         }
 
@@ -154,11 +154,11 @@ impl OutputFormatter {
         let mut wtr = Writer::from_writer(vec![]);
 
         // Write header
-        wtr.write_record(&["Pattern", "File", "Line", "Content", "Severity"])?;
+        wtr.write_record(["Pattern", "File", "Line", "Content", "Severity"])?;
 
         // Write records
         for m in matches {
-            wtr.write_record(&[
+            wtr.write_record([
                 &m.pattern_name,
                 &m.file_path.display().to_string(),
                 &m.line_number.to_string(),

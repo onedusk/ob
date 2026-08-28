@@ -281,6 +281,8 @@ impl Replacer {
 /// 2. It walks the target directory to find all files to be processed.
 /// 3. It uses a Rayon thread pool to process the files in parallel.
 /// 4. It collects and prints summary statistics.
+// TODO: collapse these arguments into an options struct (pending refactor, audit A3).
+#[allow(clippy::too_many_arguments)]
 pub fn run_replace(
     preset: Option<Preset>,
     config_file: Option<PathBuf>,

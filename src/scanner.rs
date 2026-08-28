@@ -74,7 +74,7 @@ impl Scanner {
         // Basic binary detection: check for null bytes in the first 1024 bytes (peek only).
         let buf = reader.fill_buf()?;
         let sample_len = buf.len().min(1024);
-        if buf[..sample_len].iter().any(|&b| b == 0) {
+        if buf[..sample_len].contains(&0) {
             return Ok(Vec::new());
         }
 
@@ -292,6 +292,8 @@ impl Scanner {
 /// 3. Iterating through the input paths and dispatching to the appropriate
 ///    `Scanner` methods (for files or directories).
 /// 4. Writing the results.
+// TODO: collapse these arguments into an options struct (pending refactor, audit A3).
+#[allow(clippy::too_many_arguments)]
 pub fn run_scan(
     patterns_file: PathBuf,
     inline_patterns: Vec<String>,
@@ -587,7 +589,7 @@ fn build_scan_results(matches: &[Match]) -> HashMap<PathBuf, Vec<CachedMatch>> {
     for m in matches {
         results
             .entry(m.file_path.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(CachedMatch {
                 pattern_name: m.pattern_name.clone(),
                 line_number: m.line_number,
