@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use std::borrow::Cow;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -117,6 +117,19 @@ impl Replacer {
     /// 3. If any changes were made and `dry_run` is false, the new content is
     ///    written to the file atomically.
     pub fn process_file(&self, path: &Path, options: ProcessOptions) -> Result<ProcessResult> {
+        // Skip binary files using the same heuristic as the scanner: a null
+        // byte in the first 1KB. A skipped binary is not an error.
+        {
+            let mut sample = [0u8; 1024];
+            let n = fs::File::open(path)?.read(&mut sample)?;
+            if sample[..n].contains(&0) {
+                return Ok(ProcessResult {
+                    changes: 0,
+                    modified: false,
+                });
+            }
+        }
+
         // Read file
         let content = fs::read_to_string(path)?;
         let mut new_content = Cow::Borrowed(content.as_str());
@@ -825,6 +838,48 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&file).unwrap(),
             "code line\n\nmore code\n"
+        );
+    }
+
+    #[test]
+    fn test_replace_silently_skips_binary_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("text.txt"), "alpha one\n").unwrap();
+        // Null bytes (binary heuristic) plus invalid UTF-8 so a read_to_string
+        // attempt would fail: the file must be skipped before it is read.
+        let binary = dir.join("blob.bin");
+        let binary_content = b"alpha\x00\xff\xfe\x00binary".to_vec();
+        fs::write(&binary, &binary_content).unwrap();
+
+        let result = run_replace(
+            None,
+            None,
+            Some("alpha".into()),
+            Some("beta".into()),
+            dir.to_path_buf(),
+            vec![],
+            vec![],
+            true,  // no_backup
+            false, // dry_run
+            false, // verbose
+            Some(1),
+        );
+
+        assert!(
+            result.is_ok(),
+            "a binary file must not make replace fail: {:?}",
+            result.err().map(|e| e.to_string())
+        );
+        assert_eq!(
+            fs::read(&binary).unwrap(),
+            binary_content,
+            "binary file must be untouched"
+        );
+        // Text files are still processed normally.
+        assert_eq!(
+            fs::read_to_string(dir.join("text.txt")).unwrap(),
+            "beta one\n"
         );
     }
 
