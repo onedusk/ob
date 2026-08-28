@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `scan --format` now validates its value at parse time: an unknown format (e.g. `-f jsonn`) is a hard CLI error listing the accepted values (`text`, `json`, `csv`, `sarif`, `html`). Previously any unrecognized value silently fell back to `text` output.
+- `scan --summary` combined with a non-text `--format` is now an error (`--summary is only supported with --format text`). Previously the flag was silently ignored for `json`, `csv`, `sarif`, and `html` output.
 - Corrected `scan` help text to state it uses `./patterns.yaml` instead of the misleading "default patterns" wording, and added `-e` usage examples.
 - All docs now agree on `null` replacement semantics: a `null` entry deletes the line *after* each match, and the matching line itself is kept (unchanged behavior). The CLI help previously claimed "delete line", the README "delete the matched line", and the config docs "no replacement" — three contradictory descriptions of one behavior.
 

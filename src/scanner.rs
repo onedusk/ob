@@ -311,6 +311,12 @@ pub fn run_scan(
     hidden: bool,
     no_ignore: bool,
 ) -> Result<()> {
+    // A summary is only rendered for the text format; reject the combination
+    // instead of silently ignoring the flag.
+    if include_summary && !matches!(format, OutputFormat::Text) {
+        return Err("--summary is only supported with --format text".into());
+    }
+
     let exts = normalize_extensions(extensions);
 
     // Load patterns: inline -e flags take precedence over the patterns file.
@@ -699,7 +705,60 @@ mod tests {
         let matches = scanner.scan_file(&test_file).unwrap();
         assert_eq!(matches[0].pattern_name, "test_pattern");
     }
-    
+
+    #[test]
+    fn test_summary_with_non_text_format_is_rejected() {
+        let temp_dir = TempDir::new().unwrap();
+
+        for format in [
+            OutputFormat::Json,
+            OutputFormat::Csv,
+            OutputFormat::Sarif,
+            OutputFormat::Html,
+        ] {
+            let result = run_scan(
+                PathBuf::from("patterns.yaml"),
+                vec!["TODO".to_string()],
+                None,
+                vec![],
+                vec![temp_dir.path().to_path_buf()],
+                Some(1),
+                false, // incremental
+                false, // force_full
+                false, // clear_cache
+                false, // content_hash
+                format,
+                true, // --summary
+                false,
+                false,
+            );
+            let err = result.expect_err("--summary must be rejected for non-text formats");
+            assert!(
+                err.to_string().contains("--summary"),
+                "error must name --summary: {err}"
+            );
+        }
+
+        // --summary with the text format must remain valid.
+        run_scan(
+            PathBuf::from("patterns.yaml"),
+            vec!["TODO".to_string()],
+            None,
+            vec![],
+            vec![temp_dir.path().to_path_buf()],
+            Some(1),
+            false,
+            false,
+            false,
+            false,
+            OutputFormat::Text,
+            true,
+            false,
+            false,
+        )
+        .unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_unreadable_subdir_does_not_kill_scan() {
