@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::borrow::Cow;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 /// Defines the possible output formats for scan results.
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -294,7 +294,7 @@ impl OutputFormatter {
                 locations: vec![Location {
                     physical_location: PhysicalLocation {
                         artifact_location: ArtifactLocation {
-                            uri: m.file_path.display().to_string(),
+                            uri: sarif_uri(&m.file_path),
                         },
                         region: Region {
                             start_line: m.line_number,
@@ -478,6 +478,33 @@ impl OutputFormatter {
     }
 }
 
+/// Converts a matched file path into a SARIF `artifactLocation.uri`.
+///
+/// SARIF consumers expect URIs, not raw OS paths: the path is made relative
+/// to the current working directory where possible and always uses forward
+/// slashes (with any leading `./` dropped). A path outside the working
+/// directory keeps its absolute form, slash-normalized as a best effort.
+fn sarif_uri(path: &Path) -> String {
+    let rel = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| path.strip_prefix(cwd).ok())
+        .unwrap_or(path);
+
+    if rel.is_absolute() {
+        let raw = rel.display().to_string();
+        return match std::path::MAIN_SEPARATOR {
+            '/' => raw,
+            sep => raw.replace(sep, "/"),
+        };
+    }
+
+    rel.components()
+        .filter(|c| !matches!(c, Component::CurDir))
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Guards a CSV field against spreadsheet formula injection.
 ///
 /// A field starting with `=`, `+`, `-`, or `@` is executed as a formula by
@@ -619,7 +646,38 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(parsed["version"], "2.1.0");
-        assert_eq!(parsed["runs"][0]["results"].as_array().unwrap().len(), 2);
+        let results = parsed["runs"][0]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+
+        // artifactLocation.uri must be a relative, forward-slash URI.
+        assert_eq!(
+            results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "src/main.rs"
+        );
+        assert_eq!(
+            results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "config.toml"
+        );
+    }
+
+    #[test]
+    fn test_sarif_uri_relativizes_and_normalizes() {
+        // An absolute path under the current working directory becomes relative.
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(sarif_uri(&cwd.join("src").join("main.rs")), "src/main.rs");
+
+        // A "./"-prefixed relative path (as produced when scanning ".") is cleaned.
+        assert_eq!(sarif_uri(Path::new("./src/main.rs")), "src/main.rs");
+
+        // A plain relative path is kept as-is.
+        assert_eq!(sarif_uri(Path::new("config.toml")), "config.toml");
+
+        // An absolute path outside the working directory stays absolute.
+        #[cfg(unix)]
+        assert_eq!(
+            sarif_uri(Path::new("/outside/of/cwd.txt")),
+            "/outside/of/cwd.txt"
+        );
     }
 
     #[test]
