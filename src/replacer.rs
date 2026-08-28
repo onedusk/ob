@@ -41,6 +41,8 @@ pub struct ProcessResult {
     pub changes: usize,
     /// `true` if the file was modified.
     pub modified: bool,
+    /// For dry runs only: a `- old` / `+ new` preview of the changed lines.
+    pub preview: Option<String>,
 }
 
 /// Statistics from an `undo` operation.
@@ -130,6 +132,7 @@ impl Replacer {
                 return Ok(ProcessResult {
                     changes: 0,
                     modified: false,
+                    preview: None,
                 });
             }
         }
@@ -215,6 +218,13 @@ impl Replacer {
             }
         }
 
+        // In a dry run, capture what would change so the caller can show it.
+        let preview = if options.dry_run && total_changes > 0 {
+            Some(dry_run_preview(&content, new_content.as_ref()))
+        } else {
+            None
+        };
+
         // Write if changed
         if total_changes > 0 && !options.dry_run {
             if options.create_backup {
@@ -246,6 +256,7 @@ impl Replacer {
         Ok(ProcessResult {
             changes: total_changes,
             modified: total_changes > 0,
+            preview,
         })
     }
 
@@ -430,11 +441,18 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
                         total_changes.fetch_add(result.changes, Ordering::Relaxed);
                         if log_changes {
                             if dry_run {
-                                println!(
-                                    "DRY Modified {} ({} changes)",
+                                // Build the whole per-file block first and emit
+                                // it with a single print so parallel workers
+                                // cannot interleave their previews.
+                                let mut block = format!(
+                                    "DRY Modified {} ({} changes)\n",
                                     path.display(),
                                     result.changes
                                 );
+                                if let Some(preview) = &result.preview {
+                                    block.push_str(preview);
+                                }
+                                print!("{block}");
                             } else {
                                 println!(
                                     "Modified {} ({} changes)",
@@ -527,6 +545,94 @@ pub fn run_clean_backups(dir: PathBuf, dry_run: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Maximum number of `-`/`+` lines shown per file in a dry-run preview.
+const PREVIEW_MAX_LINES: usize = 40;
+
+/// How many lines ahead the preview diff looks to re-align after a change.
+const PREVIEW_RESYNC_WINDOW: usize = 50;
+
+/// Builds a line-level preview of what a dry run would change: changed lines
+/// as `- old` / `+ new` pairs, deletions as `-` lines, insertions as `+`
+/// lines.
+///
+/// This is a greedy line diff, not a minimal one: on a mismatch it prefers
+/// whichever of "lines deleted" or "lines inserted" re-aligns the two sides
+/// soonest (within [`PREVIEW_RESYNC_WINDOW`] lines) and otherwise reports a
+/// changed pair, so an ambiguous whole-file transform may attribute a change
+/// to a nearby identical line. Output is capped at [`PREVIEW_MAX_LINES`]
+/// lines with a `... and N more` note; a change `lines()` cannot see (e.g.
+/// only the trailing newline differs) falls back to a note.
+fn dry_run_preview(old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+
+    let mut diff: Vec<String> = Vec::new();
+    let mut i = 0;
+    let mut j = 0;
+    while i < old_lines.len() && j < new_lines.len() {
+        if old_lines[i] == new_lines[j] {
+            i += 1;
+            j += 1;
+            continue;
+        }
+        // Distance until the old side re-aligns with the current new line
+        // (pure deletion) or the new side re-aligns with the current old line
+        // (pure insertion). Both are at least 1 since the lines differ.
+        let deleted = old_lines[i..]
+            .iter()
+            .take(PREVIEW_RESYNC_WINDOW)
+            .position(|l| *l == new_lines[j]);
+        let inserted = new_lines[j..]
+            .iter()
+            .take(PREVIEW_RESYNC_WINDOW)
+            .position(|l| *l == old_lines[i]);
+        match (deleted, inserted) {
+            (Some(d), n) if n.is_none_or(|n| d <= n) => {
+                for line in &old_lines[i..i + d] {
+                    diff.push(format!("- {line}"));
+                }
+                i += d;
+            }
+            (_, Some(n)) => {
+                for line in &new_lines[j..j + n] {
+                    diff.push(format!("+ {line}"));
+                }
+                j += n;
+            }
+            // `(None, None)`; a `(Some, None)` with a failed guard cannot
+            // occur, but the compiler cannot see through the guard.
+            _ => {
+                diff.push(format!("- {}", old_lines[i]));
+                diff.push(format!("+ {}", new_lines[j]));
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    for line in &old_lines[i..] {
+        diff.push(format!("- {line}"));
+    }
+    for line in &new_lines[j..] {
+        diff.push(format!("+ {line}"));
+    }
+
+    let mut out = String::new();
+    for line in diff.iter().take(PREVIEW_MAX_LINES) {
+        out.push_str(line);
+        out.push('\n');
+    }
+    if diff.len() > PREVIEW_MAX_LINES {
+        out.push_str(&format!(
+            "  ... and {} more\n",
+            diff.len() - PREVIEW_MAX_LINES
+        ));
+    }
+    if diff.is_empty() {
+        out.push_str("  (changes not attributable to specific lines)\n");
+    }
+    out
 }
 
 /// Returns the line ending used by `content`: `"\r\n"` if any CRLF ending is
@@ -935,6 +1041,89 @@ mod tests {
             fs::read_to_string(&file).unwrap(),
             "bar1 bar22 keep\n\nbar333\n\nplain\n"
         );
+    }
+
+    #[test]
+    fn test_dry_run_preview_pairs_changed_lines() {
+        let preview = dry_run_preview("foo one\nkeep me\nfoo two\n", "bar one\nkeep me\nbar two\n");
+        assert_eq!(preview, "- foo one\n+ bar one\n- foo two\n+ bar two\n");
+    }
+
+    #[test]
+    fn test_dry_run_preview_attributes_deletions_and_insertions() {
+        assert_eq!(dry_run_preview("a\nDELETED\nb\n", "a\nb\n"), "- DELETED\n");
+        assert_eq!(
+            dry_run_preview("a\nb\n", "a\nINSERTED\nb\n"),
+            "+ INSERTED\n"
+        );
+        // Multi-line block removal attributes every removed line.
+        assert_eq!(
+            dry_run_preview("a\nX1\nX2\nX3\nb\n", "a\nb\n"),
+            "- X1\n- X2\n- X3\n"
+        );
+    }
+
+    #[test]
+    fn test_dry_run_preview_caps_output_with_more_note() {
+        let old: String = (0..30).map(|n| format!("old {n}\n")).collect();
+        let new: String = (0..30).map(|n| format!("new {n}\n")).collect();
+        let preview = dry_run_preview(&old, &new);
+        // 30 changed lines make 60 diff lines: 40 shown, 20 elided.
+        assert_eq!(preview.lines().count(), 41);
+        assert!(
+            preview.ends_with("  ... and 20 more\n"),
+            "capped preview must count the elided lines: {preview}"
+        );
+    }
+
+    #[test]
+    fn test_dry_run_preview_notes_changes_lines_cannot_see() {
+        // Only the trailing newline differs; there is no line to attribute.
+        assert_eq!(
+            dry_run_preview("a\n", "a"),
+            "  (changes not attributable to specific lines)\n"
+        );
+    }
+
+    #[test]
+    fn test_dry_run_process_file_returns_preview_and_leaves_file_untouched() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        let original = "alpha one\nkeep me\n";
+        fs::write(&file, original).unwrap();
+
+        let replacer = single_pattern_replacer("alpha", "beta");
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: true,
+                    dry_run: true,
+                },
+            )
+            .unwrap();
+
+        assert!(result.modified);
+        assert_eq!(
+            result.preview.as_deref(),
+            Some("- alpha one\n+ beta one\n"),
+            "dry run must carry a line preview"
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), original);
+        assert!(!temp_dir.path().join("t.txt.bak").exists());
+
+        // A real run does not pay for a preview.
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+        assert!(result.modified);
+        assert!(result.preview.is_none());
     }
 
     #[test]

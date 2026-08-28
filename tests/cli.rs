@@ -251,6 +251,47 @@ fn replace_dry_run_leaves_files_byte_identical() {
 }
 
 #[test]
+fn replace_dry_run_previews_changed_lines() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("t.txt");
+    let original = b"alpha one\nkeep me\nalpha two\n".to_vec();
+    fs::write(&file, &original).unwrap();
+
+    let assert = ob()
+        .arg("replace")
+        .arg("-d")
+        .arg(dir)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("- alpha one"))
+        .stdout(contains("+ beta one"))
+        .stdout(contains("- alpha two"))
+        .stdout(contains("+ beta two"));
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        !stdout.contains("keep me"),
+        "unchanged lines must not appear in the preview: {stdout}"
+    );
+
+    assert_eq!(
+        fs::read(&file).unwrap(),
+        original,
+        "--dry-run must not modify the file"
+    );
+    assert!(
+        !dir.join("t.txt.bak").exists(),
+        "--dry-run must not create backups"
+    );
+}
+
+#[test]
 fn mismatched_patterns_replacements_config_is_rejected_and_file_untouched() {
     let temp = TempDir::new().unwrap();
     let work = temp.path().join("work");

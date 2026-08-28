@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Inline scan patterns:** `ob scan -e '<regex>'` (`--regex`, repeatable) scans without a YAML patterns file. When any `-e` is given, the patterns file is skipped entirely and patterns are auto-named `inline_1`, `inline_2`, ...
 - **`--hidden` / `--no-ignore` scan flags** (ripgrep-style): by default `scan` skips hidden files/directories and anything matched by `.gitignore`/`.ignore` files — which silently hides the most likely secret locations (`.env`, `.github/workflows/`, gitignored config). `--hidden` includes hidden files and `--no-ignore` stops honoring ignore files; the scan help now documents the default exclusions.
+- **Dry-run change preview:** `replace --dry-run` now shows what would change, not just how much: each `DRY Modified <file> (N changes)` line is followed by the affected lines as `- old` / `+ new` pairs (deletions as `-`, insertions as `+`), capped at 40 preview lines per file with a `... and N more` note. A change the line diff cannot attribute (e.g. only the trailing newline differs) is noted instead. Per-file blocks are printed atomically, so parallel workers cannot interleave previews.
 
 ### Changed
 
