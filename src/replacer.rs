@@ -209,7 +209,12 @@ impl Replacer {
         let mut found = 0;
         let mut restored = 0;
 
-        for entry in WalkBuilder::new(dir).build() {
+        // Backups may themselves be gitignored (e.g. "*.bak") or belong to
+        // hidden files, so walk without the standard filters.
+        let mut walker = WalkBuilder::new(dir);
+        walker.standard_filters(false);
+
+        for entry in walker.build() {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bak") {
@@ -397,7 +402,12 @@ pub fn run_clean_backups(dir: PathBuf, dry_run: bool) -> Result<()> {
 
     println!("Searching for backup files in {}...\n", dir.display());
 
-    for entry in WalkBuilder::new(&dir).build() {
+    // Backups may themselves be gitignored (e.g. "*.bak") or belong to
+    // hidden files, so walk without the standard filters.
+    let mut walker = WalkBuilder::new(&dir);
+    walker.standard_filters(false);
+
+    for entry in walker.build() {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bak") {
@@ -517,4 +527,52 @@ fn clean_empty_lines(content: &str) -> String {
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_undo_and_clean_backups_find_gitignored_and_hidden_backups() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+
+        // Reproduce the real-world setup where the target repo gitignores
+        // "*.bak": backup discovery must not depend on git filters.
+        match std::process::Command::new("git")
+            .arg("init")
+            .current_dir(dir)
+            .output()
+        {
+            Ok(out) if out.status.success() => {}
+            _ => {
+                eprintln!("git unavailable; skipping gitignored-backup test");
+                return;
+            }
+        }
+        fs::write(dir.join(".gitignore"), "*.bak\n").unwrap();
+
+        // A gitignored backup and a hidden file's backup.
+        fs::write(dir.join("a.txt"), "modified").unwrap();
+        fs::write(dir.join("a.txt.bak"), "original").unwrap();
+        fs::write(dir.join(".env"), "modified").unwrap();
+        fs::write(dir.join(".env.bak"), "original").unwrap();
+
+        let stats = Replacer::undo(dir, false).unwrap();
+        assert_eq!(stats.found, 2);
+        assert_eq!(stats.restored, 2);
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original");
+        assert_eq!(fs::read_to_string(dir.join(".env")).unwrap(), "original");
+        assert!(!dir.join("a.txt.bak").exists());
+        assert!(!dir.join(".env.bak").exists());
+
+        // clean-backups discovery must see gitignored/hidden backups too.
+        fs::write(dir.join("b.txt.bak"), "stale").unwrap();
+        fs::write(dir.join(".env2.bak"), "stale").unwrap();
+        run_clean_backups(dir.to_path_buf(), false).unwrap();
+        assert!(!dir.join("b.txt.bak").exists());
+        assert!(!dir.join(".env2.bak").exists());
+    }
 }
