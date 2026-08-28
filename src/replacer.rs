@@ -1295,6 +1295,38 @@ mod tests {
     }
 
     #[test]
+    fn test_trim_whitespace_preset_strips_crlf_lines_and_keeps_crlf() {
+        // Verified failure: (?m)$ only matches before \n, so the trailing
+        // \r on CRLF lines blocked every match ("code  \r\n" -> 0 edits).
+        // (?mR) treats \r\n as a line boundary; $ sits before the \r,
+        // which must stay in place.
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.rs");
+        fs::write(&file, "code  \r\nmore\t\t\r\nclean\r\n").unwrap();
+
+        let replacer = Replacer::new(load_preset(&Preset::TrimWhitespace)).unwrap();
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.changes, 2,
+            "trailing whitespace on CRLF lines must be matched (anchors need (?mR))"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "code\r\nmore\r\nclean\r\n",
+            "trimming must not swallow the \\r of a CRLF ending"
+        );
+    }
+
+    #[test]
     fn test_remove_empty_comments_preset_matches_interior_lines() {
         let temp_dir = TempDir::new().unwrap();
         let file = temp_dir.path().join("t.js");
@@ -1318,6 +1350,36 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&file).unwrap(),
             "code line\n\nmore code\n"
+        );
+    }
+
+    #[test]
+    fn test_remove_empty_comments_preset_matches_crlf_lines() {
+        // Verified failure: (?m)^/$ never matched a lone "//" CRLF line
+        // because the trailing \r blocked $. (?mR) treats \r\n as a line
+        // boundary; the comment text goes, its CRLF ending stays.
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.js");
+        fs::write(&file, "code line\r\n//\r\nmore code\r\n").unwrap();
+
+        let replacer = Replacer::new(load_preset(&Preset::RemoveEmptyComments)).unwrap();
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.changes, 1,
+            "a lone // line in a CRLF file must be matched (anchors need (?mR))"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "code line\r\n\r\nmore code\r\n"
         );
     }
 

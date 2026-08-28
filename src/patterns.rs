@@ -120,8 +120,10 @@ pub fn load_preset(preset: &Preset) -> ReplaceConfig {
         Preset::TrimWhitespace => ReplaceConfig {
             patterns: vec![
                 // (?m) makes $ match at every line end; patterns are applied
-                // to the whole file content, not line-by-line.
-                "(?m)[ \\t]+$".to_string(), // Trailing whitespace
+                // to the whole file content, not line-by-line. R treats \r\n
+                // as a line boundary so CRLF lines match too: $ sits before
+                // the \r, which stays in place.
+                "(?mR)[ \\t]+$".to_string(), // Trailing whitespace
             ],
             replacements: vec![Some("".to_string())],
             blocks: vec![],
@@ -132,10 +134,12 @@ pub fn load_preset(preset: &Preset) -> ReplaceConfig {
         Preset::RemoveEmptyComments => ReplaceConfig {
             patterns: vec![
                 // (?m) makes ^/$ match at every line boundary; patterns are
-                // applied to the whole file content, not line-by-line.
-                "(?m)^[ \\t]*//[ \\t]*$".to_string(), // Empty // comments
-                "(?m)^[ \\t]*#[ \\t]*$".to_string(),  // Empty # comments
-                "(?m)^[ \\t]*/\\*[ \\t]*\\*/[ \\t]*$".to_string(), // Empty /* */ comments
+                // applied to the whole file content, not line-by-line. R
+                // treats \r\n as a line boundary so CRLF lines match too:
+                // $ sits before the \r, which stays in place.
+                "(?mR)^[ \\t]*//[ \\t]*$".to_string(), // Empty // comments
+                "(?mR)^[ \\t]*#[ \\t]*$".to_string(),  // Empty # comments
+                "(?mR)^[ \\t]*/\\*[ \\t]*\\*/[ \\t]*$".to_string(), // Empty /* */ comments
             ],
             replacements: vec![
                 Some("".to_string()),
