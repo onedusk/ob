@@ -139,7 +139,14 @@ impl Scanner {
         let mut all_matches = Vec::new();
 
         for entry in WalkBuilder::new(dir).standard_filters(true).build() {
-            let entry = entry?;
+            // A single unreadable entry must not kill the whole scan.
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    eprintln!("Warning: skipping unreadable path: {e}");
+                    continue;
+                }
+            };
             let path = entry.path();
             if path.is_file() && should_process_file(path, extensions) {
                 let matches = self.scan_file(path)?;
@@ -176,7 +183,14 @@ impl Scanner {
             .standard_filters(true)
             .threads(resolve_workers(workers))
             .build()
-            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| match entry {
+                Ok(entry) => Some(entry),
+                Err(e) => {
+                    // A single unreadable entry must not kill the whole scan.
+                    eprintln!("Warning: skipping unreadable path: {e}");
+                    None
+                }
+            })
             .filter(|entry| {
                 let path = entry.path();
                 path.is_file() && should_process_file(path, extensions)
@@ -441,7 +455,15 @@ fn collect_files(inputs: &[PathBuf], extensions: &HashSet<String>) -> Result<Vec
             }
         } else if input.is_dir() {
             for entry in WalkBuilder::new(input).standard_filters(true).build() {
-                let entry = entry?;
+                // A single unreadable entry (e.g. a permission-denied
+                // subdirectory) must not kill the whole scan.
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        eprintln!("Warning: skipping unreadable path: {e}");
+                        continue;
+                    }
+                };
                 let path = entry.path();
                 if path.is_file() && should_process_file(path, extensions) {
                     files.push(path.to_path_buf());
@@ -634,6 +656,44 @@ mod tests {
         assert_eq!(matches[0].pattern_name, "test_pattern");
     }
     
+    #[cfg(unix)]
+    #[test]
+    fn test_unreadable_subdir_does_not_kill_scan() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("readable.txt"), "contact test@example.com\n").unwrap();
+        let locked = dir.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("unreachable.txt"), "test@example.com\n").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let patterns = vec![Pattern {
+            name: "email".into(),
+            pattern: r"\b[\w._%+-]+@[\w.-]+\.[\w]{2,}\b".into(),
+        }];
+        let scanner = Scanner::new(patterns).unwrap();
+
+        let sequential = scanner.scan_directory(dir, &[]);
+        let parallel = scanner.scan_directory_parallel(dir, &[], Some(1));
+        let collected = collect_files(&[dir.to_path_buf()], &HashSet::new());
+
+        // Restore permissions before asserting so TempDir cleanup succeeds.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let sequential = sequential.unwrap();
+        assert_eq!(sequential.len(), 1);
+        assert_eq!(sequential[0].file_path, dir.join("readable.txt"));
+
+        let parallel = parallel.unwrap();
+        assert_eq!(parallel.len(), 1);
+        assert_eq!(parallel[0].file_path, dir.join("readable.txt"));
+
+        let collected = collected.unwrap();
+        assert_eq!(collected, vec![dir.join("readable.txt")]);
+    }
+
     #[test]
     fn test_parallel_produces_same_results() {
         let temp_dir = TempDir::new().unwrap();
