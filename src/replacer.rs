@@ -270,10 +270,20 @@ impl Replacer {
         let mut found = 0;
         let mut restored = 0;
 
-        // Backups may themselves be gitignored (e.g. "*.bak") or belong to
-        // hidden files, so walk without the standard filters.
+        // Backups created by `replace` can be gitignored (e.g. "*.bak"), so
+        // walk with ignore-file processing disabled — but keep hidden
+        // filtering on: `replace` only processes files visible under the
+        // standard filters, so a backup it creates can never live behind a
+        // hidden path. Descending into hidden directories would restore
+        // user-owned .bak files (e.g. a pre-existing .config/settings.bak)
+        // over live files, and would walk .git.
         let mut walker = WalkBuilder::new(dir);
-        walker.standard_filters(false);
+        walker
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .ignore(false)
+            .parents(false);
 
         for entry in walker.build() {
             let entry = entry?;
@@ -514,10 +524,19 @@ pub fn run_clean_backups(dir: PathBuf, dry_run: bool) -> Result<()> {
 
     println!("Searching for backup files in {}...\n", dir.display());
 
-    // Backups may themselves be gitignored (e.g. "*.bak") or belong to
-    // hidden files, so walk without the standard filters.
+    // Backups created by `replace` can be gitignored (e.g. "*.bak"), so walk
+    // with ignore-file processing disabled — but keep hidden filtering on:
+    // `replace` only processes files visible under the standard filters, so a
+    // backup it creates can never live behind a hidden path. Descending into
+    // hidden directories would delete user-owned .bak files that oober never
+    // created, and would walk .git.
     let mut walker = WalkBuilder::new(&dir);
-    walker.standard_filters(false);
+    walker
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .ignore(false)
+        .parents(false);
 
     for entry in walker.build() {
         let entry = entry?;
@@ -728,7 +747,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_undo_and_clean_backups_find_gitignored_and_hidden_backups() {
+    fn test_undo_and_clean_backups_find_gitignored_but_skip_hidden_backups() {
         let temp_dir = TempDir::new().unwrap();
         let dir = temp_dir.path();
 
@@ -747,26 +766,63 @@ mod tests {
         }
         fs::write(dir.join(".gitignore"), "*.bak\n").unwrap();
 
-        // A gitignored backup and a hidden file's backup.
+        // A gitignored backup, and a hidden file's .bak. `replace` never
+        // processes hidden paths, so the latter is user-owned and must not
+        // be restored.
         fs::write(dir.join("a.txt"), "modified").unwrap();
         fs::write(dir.join("a.txt.bak"), "original").unwrap();
-        fs::write(dir.join(".env"), "modified").unwrap();
-        fs::write(dir.join(".env.bak"), "original").unwrap();
+        fs::write(dir.join(".env"), "live").unwrap();
+        fs::write(dir.join(".env.bak"), "user data").unwrap();
 
         let stats = Replacer::undo(dir, false).unwrap();
-        assert_eq!(stats.found, 2);
-        assert_eq!(stats.restored, 2);
+        assert_eq!(stats.found, 1);
+        assert_eq!(stats.restored, 1);
         assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original");
-        assert_eq!(fs::read_to_string(dir.join(".env")).unwrap(), "original");
         assert!(!dir.join("a.txt.bak").exists());
-        assert!(!dir.join(".env.bak").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join(".env")).unwrap(),
+            "live",
+            "undo must not restore a hidden .bak oober cannot have created"
+        );
+        assert!(dir.join(".env.bak").exists());
 
-        // clean-backups discovery must see gitignored/hidden backups too.
+        // clean-backups discovery: gitignored backups are removed, hidden
+        // .bak files are left alone.
         fs::write(dir.join("b.txt.bak"), "stale").unwrap();
-        fs::write(dir.join(".env2.bak"), "stale").unwrap();
         run_clean_backups(dir.to_path_buf(), false).unwrap();
         assert!(!dir.join("b.txt.bak").exists());
-        assert!(!dir.join(".env2.bak").exists());
+        assert!(dir.join(".env.bak").exists());
+    }
+
+    #[test]
+    fn test_undo_and_clean_backups_skip_user_owned_hidden_dir_backups() {
+        // Verified failure: undo walked into hidden directories and copied a
+        // pre-existing user-owned .config/settings.bak over the live
+        // .config/settings. `replace` cannot create backups behind hidden
+        // paths, so undo and clean-backups must never touch them.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::create_dir(dir.join(".config")).unwrap();
+        let settings = dir.join(".config").join("settings");
+        let settings_bak = dir.join(".config").join("settings.bak");
+        fs::write(&settings, "live").unwrap();
+        fs::write(&settings_bak, "old").unwrap();
+
+        let stats = Replacer::undo(dir, false).unwrap();
+        assert_eq!(stats.found, 0);
+        assert_eq!(stats.restored, 0);
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            "live",
+            "undo must not overwrite live files from user-owned hidden backups"
+        );
+        assert!(settings_bak.exists());
+
+        run_clean_backups(dir.to_path_buf(), false).unwrap();
+        assert!(
+            settings_bak.exists(),
+            "clean-backups must not delete user-owned hidden backups"
+        );
     }
 
     #[test]
