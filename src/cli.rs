@@ -23,7 +23,7 @@ Designed for large codebases with:
 QUICK EXAMPLES:
   ob scan .                           # Scan current dir using ./patterns.yaml
   ob scan -e 'TODO|FIXME' .           # Scan with an inline regex (no YAML file)
-  ob replace -d . --preset CleanDebug # Remove all debug code
+  ob replace -d . --preset clean-debug # Remove all debug code
   ob rename -d . -p 'test_(.*)' -r 'spec_$1'  # Rename test files
   ob undo -d .                        # Restore from backups
 
@@ -125,10 +125,10 @@ pub enum Commands {
     /// Replace patterns in files (with automatic backups)
     ///
     /// EXAMPLES:
-    ///   ob replace -d . --preset CleanDebug        # Remove all debug code
+    ///   ob replace -d . --preset clean-debug       # Remove all debug code
     ///   ob replace -d . -p 'TODO' -r 'TODO'        # Simple replacement
     ///   ob replace -d . -c config.yaml --dry-run   # Preview changes
-    ///   ob replace -d src/ -x py --preset RemoveTodos
+    ///   ob replace -d src/ -x py --preset remove-todos
     ///
     /// Config file format (config.yaml):
     ///   patterns: ['console\\.log', 'debugger;']
@@ -140,7 +140,8 @@ pub enum Commands {
     /// Patterns are matched against the whole file content, not line-by-line:
     /// use (?m) for per-line ^/$ anchors (e.g. '(?m)[ \t]+$').
     ///
-    /// Available presets: RemoveCopyright, CleanDebug, RemoveTodos, TrimWhitespace
+    /// Available presets: remove-copyright, clean-debug, remove-todos, trim-whitespace,
+    /// remove-empty-comments, tabs-to-spaces, spaces-to-tabs
     Replace {
         /// The name of a built-in preset to use for replacement.
         #[arg(long, value_enum)]
