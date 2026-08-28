@@ -286,7 +286,14 @@ impl Replacer {
             .parents(false);
 
         for entry in walker.build() {
-            let entry = entry?;
+            // A single unreadable entry must not kill the whole run.
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) => {
+                    eprintln!("Warning: skipping unreadable path: {e}");
+                    continue;
+                }
+            };
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bak") {
                 found += 1;
@@ -414,7 +421,15 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
     walker.standard_filters(true); // Respect .gitignore
 
     for entry in walker.build() {
-        let entry = entry?;
+        // A single unreadable entry (e.g. a permission-denied subdirectory)
+        // must not kill the whole run, matching scan's behavior.
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!("Warning: skipping unreadable path: {e}");
+                continue;
+            }
+        };
         let path = entry.path();
 
         // Check if path should be excluded
@@ -539,7 +554,14 @@ pub fn run_clean_backups(dir: PathBuf, dry_run: bool) -> Result<()> {
         .parents(false);
 
     for entry in walker.build() {
-        let entry = entry?;
+        // A single unreadable entry must not kill the whole run.
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!("Warning: skipping unreadable path: {e}");
+                continue;
+            }
+        };
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bak") {
             found += 1;
@@ -1375,6 +1397,83 @@ mod tests {
             "beta one\n"
         );
         assert_eq!(fs::read_to_string(&locked).unwrap(), "alpha two\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_replace_continues_past_unreadable_subdir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Verified failure: one chmod-000 subdirectory aborted the walk via
+        // `entry?` before any file was collected, so zero files were
+        // processed — while scan on the same tree warned and continued.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("readable.txt"), "alpha one\n").unwrap();
+        let locked = dir.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("unreachable.txt"), "alpha two\n").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("alpha".into()),
+            replacement: Some("beta".into()),
+            dir: dir.to_path_buf(),
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        });
+
+        // Restore permissions before asserting so TempDir cleanup succeeds.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(
+            result.is_ok(),
+            "an unreadable subdirectory must not fail the run: {:?}",
+            result.err().map(|e| e.to_string())
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("readable.txt")).unwrap(),
+            "beta one\n",
+            "the readable file must still be processed"
+        );
+        assert_eq!(
+            fs::read_to_string(locked.join("unreachable.txt")).unwrap(),
+            "alpha two\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_undo_and_clean_backups_continue_past_unreadable_subdir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.txt"), "modified").unwrap();
+        fs::write(dir.join("a.txt.bak"), "original").unwrap();
+        let locked = dir.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let undo_result = Replacer::undo(dir, true);
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        let stats = undo_result.expect("an unreadable subdirectory must not fail undo");
+        assert_eq!(stats.restored, 1);
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original");
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let clean_result = run_clean_backups(dir.to_path_buf(), false);
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+        clean_result.expect("an unreadable subdirectory must not fail clean-backups");
+        assert!(!dir.join("a.txt.bak").exists());
     }
 
     #[test]

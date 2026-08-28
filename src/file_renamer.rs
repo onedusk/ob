@@ -39,7 +39,15 @@ pub fn run_rename(
     walker.standard_filters(true);
 
     for entry in walker.build() {
-        let entry = entry?;
+        // A single unreadable entry (e.g. a permission-denied subdirectory)
+        // must not kill the whole run, matching scan's behavior.
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!("Warning: skipping unreadable path: {e}");
+                continue;
+            }
+        };
         let path = entry.path();
         // Never rename .bak backups: undo pairs each backup with its
         // original by name, and a renamed backup breaks that pairing.
@@ -557,6 +565,40 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
             "original"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_rename_continues_past_unreadable_subdir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Verified failure: one chmod-000 subdirectory aborted the walk via
+        // `entry?` before any file was collected, so zero files were renamed.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("file_1.txt"), "one").unwrap();
+        let locked = dir.join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = run_rename(
+            dir.to_path_buf(),
+            "file".to_string(),
+            "doc".to_string(),
+            false, // dry_run
+            false, // verbose
+            None,
+        );
+
+        // Restore permissions before asserting so TempDir cleanup succeeds.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        result.expect("an unreadable subdirectory must not fail the run");
+        assert_eq!(
+            fs::read_to_string(dir.join("doc_1.txt")).unwrap(),
+            "one",
+            "the readable file must still be renamed"
         );
     }
 
