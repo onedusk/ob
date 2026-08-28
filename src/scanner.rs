@@ -128,17 +128,32 @@ impl Scanner {
 
     /// Scans a directory for files matching the given extensions and finds pattern matches.
     ///
+    /// Hidden files and gitignored files are skipped unless `hidden` /
+    /// `no_ignore` are set (see [`build_walker`]).
+    ///
     /// This is a sequential, single-threaded scan. For better performance on large
     /// directories, use `scan_directory_parallel`.
-    pub fn scan_directory(&self, dir: &Path, extensions: &[String]) -> Result<Vec<Match>> {
+    pub fn scan_directory(
+        &self,
+        dir: &Path,
+        extensions: &[String],
+        hidden: bool,
+        no_ignore: bool,
+    ) -> Result<Vec<Match>> {
         let extensions = normalize_extensions_ref(extensions);
-        self.scan_directory_with_set(dir, &extensions)
+        self.scan_directory_with_set(dir, &extensions, hidden, no_ignore)
     }
 
-    fn scan_directory_with_set(&self, dir: &Path, extensions: &HashSet<String>) -> Result<Vec<Match>> {
+    fn scan_directory_with_set(
+        &self,
+        dir: &Path,
+        extensions: &HashSet<String>,
+        hidden: bool,
+        no_ignore: bool,
+    ) -> Result<Vec<Match>> {
         let mut all_matches = Vec::new();
 
-        for entry in WalkBuilder::new(dir).standard_filters(true).build() {
+        for entry in build_walker(dir, hidden, no_ignore).build() {
             // A single unreadable entry must not kill the whole scan.
             let entry = match entry {
                 Ok(entry) => entry,
@@ -167,9 +182,11 @@ impl Scanner {
         dir: &Path,
         extensions: &[String],
         workers: Option<usize>,
+        hidden: bool,
+        no_ignore: bool,
     ) -> Result<Vec<Match>> {
         let extensions = normalize_extensions_ref(extensions);
-        self.scan_directory_parallel_with_set(dir, &extensions, workers)
+        self.scan_directory_parallel_with_set(dir, &extensions, workers, hidden, no_ignore)
     }
 
     fn scan_directory_parallel_with_set(
@@ -177,10 +194,11 @@ impl Scanner {
         dir: &Path,
         extensions: &HashSet<String>,
         workers: Option<usize>,
+        hidden: bool,
+        no_ignore: bool,
     ) -> Result<Vec<Match>> {
         // Collect all file paths first
-        let files: Vec<PathBuf> = WalkBuilder::new(dir)
-            .standard_filters(true)
+        let files: Vec<PathBuf> = build_walker(dir, hidden, no_ignore)
             .threads(resolve_workers(workers))
             .build()
             .filter_map(|entry| match entry {
@@ -290,6 +308,8 @@ pub fn run_scan(
     content_hash: bool,
     format: String,
     include_summary: bool,
+    hidden: bool,
+    no_ignore: bool,
 ) -> Result<()> {
     let exts = normalize_extensions(extensions);
 
@@ -319,7 +339,7 @@ pub fn run_scan(
         None => Box::new(BufWriter::new(std::io::stdout())),
     };
 
-    let files = collect_files(&inputs, &exts)?;
+    let files = collect_files(&inputs, &exts, hidden, no_ignore)?;
     let project_root = determine_project_root(&inputs)?;
     let mut files_to_scan = files.clone();
     let mut cached_matches: Vec<Match> = Vec::new();
@@ -445,7 +465,33 @@ fn resolve_workers(workers: Option<usize>) -> usize {
     })
 }
 
-fn collect_files(inputs: &[PathBuf], extensions: &HashSet<String>) -> Result<Vec<PathBuf>> {
+/// Builds a directory walker for scanning. The standard filters (hidden
+/// files, .gitignore/.ignore rules) are on by default; `hidden` re-includes
+/// hidden files and directories, and `no_ignore` stops honoring
+/// .gitignore/.ignore files (ripgrep-style `--hidden` / `--no-ignore`).
+fn build_walker(dir: &Path, hidden: bool, no_ignore: bool) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(dir);
+    builder.standard_filters(true);
+    if hidden {
+        builder.hidden(false);
+    }
+    if no_ignore {
+        builder
+            .ignore(false)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .parents(false);
+    }
+    builder
+}
+
+fn collect_files(
+    inputs: &[PathBuf],
+    extensions: &HashSet<String>,
+    hidden: bool,
+    no_ignore: bool,
+) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
 
     for input in inputs {
@@ -454,7 +500,7 @@ fn collect_files(inputs: &[PathBuf], extensions: &HashSet<String>) -> Result<Vec
                 files.push(input.to_path_buf());
             }
         } else if input.is_dir() {
-            for entry in WalkBuilder::new(input).standard_filters(true).build() {
+            for entry in build_walker(input, hidden, no_ignore).build() {
                 // A single unreadable entry (e.g. a permission-denied
                 // subdirectory) must not kill the whole scan.
                 let entry = match entry {
@@ -675,9 +721,9 @@ mod tests {
         }];
         let scanner = Scanner::new(patterns).unwrap();
 
-        let sequential = scanner.scan_directory(dir, &[]);
-        let parallel = scanner.scan_directory_parallel(dir, &[], Some(1));
-        let collected = collect_files(&[dir.to_path_buf()], &HashSet::new());
+        let sequential = scanner.scan_directory(dir, &[], false, false);
+        let parallel = scanner.scan_directory_parallel(dir, &[], Some(1), false, false);
+        let collected = collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false);
 
         // Restore permissions before asserting so TempDir cleanup succeeds.
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
@@ -692,6 +738,83 @@ mod tests {
 
         let collected = collected.unwrap();
         assert_eq!(collected, vec![dir.join("readable.txt")]);
+    }
+
+    fn aws_key_scanner() -> Scanner {
+        Scanner::new(vec![Pattern {
+            name: "aws_key".into(),
+            pattern: r"AKIA[0-9A-Z]{16}".into(),
+        }])
+        .unwrap()
+    }
+
+    #[test]
+    fn test_hidden_env_file_scanned_only_with_hidden_flag() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join(".env"), "AWS_KEY=AKIAABCDEFGHIJKLMNOP\n").unwrap();
+
+        let scanner = aws_key_scanner();
+
+        let default_matches = scanner.scan_directory(dir, &[], false, false).unwrap();
+        assert!(
+            default_matches.is_empty(),
+            "hidden files must be excluded by default"
+        );
+
+        let hidden_matches = scanner.scan_directory(dir, &[], true, false).unwrap();
+        assert_eq!(hidden_matches.len(), 1);
+        assert_eq!(hidden_matches[0].file_path, dir.join(".env"));
+
+        // collect_files (the run_scan path) must agree with the helpers.
+        assert!(collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), true, false).unwrap(),
+            vec![dir.join(".env")]
+        );
+    }
+
+    #[test]
+    fn test_gitignored_file_scanned_only_with_no_ignore_flag() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+
+        match std::process::Command::new("git")
+            .arg("init")
+            .current_dir(dir)
+            .output()
+        {
+            Ok(out) if out.status.success() => {}
+            _ => {
+                eprintln!("git unavailable; skipping gitignored-scan test");
+                return;
+            }
+        }
+        fs::write(dir.join(".gitignore"), "secret.txt\n").unwrap();
+        fs::write(dir.join("secret.txt"), "key AKIAABCDEFGHIJKLMNOP\n").unwrap();
+
+        let scanner = aws_key_scanner();
+
+        let default_matches = scanner.scan_directory(dir, &[], false, false).unwrap();
+        assert!(
+            default_matches.is_empty(),
+            "gitignored files must be excluded by default"
+        );
+
+        let no_ignore_matches = scanner.scan_directory(dir, &[], false, true).unwrap();
+        assert_eq!(no_ignore_matches.len(), 1);
+        assert_eq!(no_ignore_matches[0].file_path, dir.join("secret.txt"));
+
+        // collect_files (the run_scan path) must agree with the helpers.
+        assert!(collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, true).unwrap(),
+            vec![dir.join("secret.txt")]
+        );
     }
 
     #[test]
@@ -711,11 +834,11 @@ mod tests {
         let scanner = Scanner::new(patterns).unwrap();
         
         // Sequential scan
-        let mut seq_results = scanner.scan_directory(temp_dir.path(), &[]).unwrap();
+        let mut seq_results = scanner.scan_directory(temp_dir.path(), &[], false, false).unwrap();
         seq_results.sort_by_key(|m| m.file_path.clone());
-        
+
         // Parallel scan
-        let mut par_results = scanner.scan_directory_parallel(temp_dir.path(), &[], None).unwrap();
+        let mut par_results = scanner.scan_directory_parallel(temp_dir.path(), &[], None, false, false).unwrap();
         par_results.sort_by_key(|m| m.file_path.clone());
         
         // Results should be identical (after sorting)

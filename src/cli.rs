@@ -64,6 +64,12 @@ pub enum Commands {
     ///   ob scan -p security.yaml src/ lib/     # Scan for security issues
     ///   ob scan -x js,ts -o results.txt .      # Scan only JS/TS files
     ///   ob scan -f json . | jq '.matches[]'    # Output as JSON
+    ///   ob scan --hidden --no-ignore .         # Include hidden + gitignored files
+    ///
+    /// DEFAULT EXCLUSIONS: hidden files and directories (dotfiles such as .env,
+    /// .github/) and anything matched by .gitignore/.ignore files are NOT
+    /// scanned. For secret scanning, add --hidden and --no-ignore so likely
+    /// secret locations are not silently skipped.
     ///
     /// Pattern files use YAML format:
     ///   patterns:
@@ -116,6 +122,14 @@ pub enum Commands {
         /// Include a summary of scan statistics in the output.
         #[arg(long = "summary")]
         include_summary: bool,
+
+        /// Include hidden files and directories (skipped by default, e.g. `.env`).
+        #[arg(long = "hidden")]
+        hidden: bool,
+
+        /// Do not respect .gitignore/.ignore files (respected by default).
+        #[arg(long = "no-ignore")]
+        no_ignore: bool,
 
         /// The input files or directories to scan.
         #[arg(required = true)]

@@ -96,6 +96,8 @@ fn main() -> Result<()> {
             content_hash,
             format,
             include_summary,
+            hidden,
+            no_ignore,
             inputs,
         } => scanner::run_scan(
             patterns,
@@ -110,6 +112,8 @@ fn main() -> Result<()> {
             content_hash,
             format,
             include_summary,
+            hidden,
+            no_ignore,
         ),
         Commands::Replace {
             preset,
