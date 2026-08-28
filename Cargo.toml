@@ -29,3 +29,8 @@ walkdir = "2.4"                                                # Directory walki
 [dev-dependencies]
 assert_cmd = "2.0"                                             # End-to-end CLI testing
 predicates = "3.0"                                             # Assertions on CLI output
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
