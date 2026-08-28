@@ -1384,6 +1384,34 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_empty_comments_preset_removes_multiline_empty_blocks() {
+        // Verified regression vs main: deleting the preset's broken block
+        // entry also dropped removal of two-line empty block comments
+        // ("/*\n */") — 0 edits. A whole-content /\*\s*\*/ pattern covers
+        // them, since patterns run against the whole file and \s spans lines.
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.js");
+        fs::write(&file, "code\n/*\n */\nmore\n").unwrap();
+
+        let replacer = Replacer::new(load_preset(&Preset::RemoveEmptyComments)).unwrap();
+        let result = replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            result.changes, 1,
+            "a multi-line empty block comment must be removed"
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "code\n\nmore\n");
+    }
+
+    #[test]
     fn test_replace_silently_skips_binary_files() {
         let temp_dir = TempDir::new().unwrap();
         let dir = temp_dir.path();

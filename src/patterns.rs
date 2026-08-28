@@ -140,8 +140,12 @@ pub fn load_preset(preset: &Preset) -> ReplaceConfig {
                 "(?mR)^[ \\t]*//[ \\t]*$".to_string(), // Empty // comments
                 "(?mR)^[ \\t]*#[ \\t]*$".to_string(),  // Empty # comments
                 "(?mR)^[ \\t]*/\\*[ \\t]*\\*/[ \\t]*$".to_string(), // Empty /* */ comments
+                // Empty block comments spanning lines ("/*\n */"): patterns
+                // run against whole-file content, and \s matches newlines.
+                "/\\*\\s*\\*/".to_string(),
             ],
             replacements: vec![
+                Some("".to_string()),
                 Some("".to_string()),
                 Some("".to_string()),
                 Some("".to_string()),
