@@ -168,8 +168,16 @@ impl Scanner {
             };
             let path = entry.path();
             if path.is_file() && should_process_file(path, extensions) {
-                let matches = self.scan_file(path)?;
-                all_matches.extend(matches);
+                // A single unreadable file must not kill the whole scan.
+                match self.scan_file(path) {
+                    Ok(matches) => all_matches.extend(matches),
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: skipping unreadable file '{}': {e}",
+                            path.display()
+                        )
+                    }
+                }
             }
         }
 
@@ -233,18 +241,27 @@ impl Scanner {
             .num_threads(resolve_workers(workers))
             .build()?;
 
-        pool.install(|| {
+        Ok(pool.install(|| {
             files
                 .par_iter()
-                .try_fold(Vec::new, |mut acc, path| {
-                    acc.extend(self.scan_file(path)?);
-                    Ok(acc)
+                .fold(Vec::new, |mut acc, path| {
+                    // A single unreadable file must not kill the whole scan.
+                    match self.scan_file(path) {
+                        Ok(matches) => acc.extend(matches),
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: skipping unreadable file '{}': {e}",
+                                path.display()
+                            )
+                        }
+                    }
+                    acc
                 })
-                .try_reduce(Vec::new, |mut left, mut right| {
+                .reduce(Vec::new, |mut left, mut right| {
                     left.append(&mut right);
-                    Ok(left)
+                    left
                 })
-        })
+        }))
     }
 }
 
@@ -621,7 +638,17 @@ fn stream_text_output(
 
         pool.install(|| {
             files.par_iter().try_for_each(|path| -> Result<()> {
-                let matches = scanner.scan_file(path)?;
+                // A single unreadable file must not kill the whole scan.
+                let matches = match scanner.scan_file(path) {
+                    Ok(matches) => matches,
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: skipping unreadable file '{}': {e}",
+                            path.display()
+                        );
+                        return Ok(());
+                    }
+                };
                 if matches.is_empty() {
                     return Ok(());
                 }
@@ -821,6 +848,74 @@ mod tests {
 
         let collected = collected.unwrap();
         assert_eq!(collected, vec![dir.join("readable.txt")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_unreadable_file_does_not_kill_scan() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let scanme = temp_dir.path().join("scanme");
+        fs::create_dir(&scanme).unwrap();
+        fs::write(scanme.join("ok.txt"), "hello TODO world\n").unwrap();
+        let locked = scanme.join("locked.txt");
+        fs::write(&locked, "TODO locked\n").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let scanner = Scanner::new(vec![Pattern {
+            name: "todo".into(),
+            pattern: "TODO".into(),
+        }])
+        .unwrap();
+
+        let sequential = scanner.scan_directory(&scanme, &[], false, false);
+        let parallel = scanner.scan_directory_parallel(&scanme, &[], Some(1), false, false);
+
+        // run_scan: the streaming (text) and collected (json) paths must both
+        // succeed and report the readable file's match. Output files live
+        // outside the scanned tree so they are not scanned themselves.
+        let options = |format, output: PathBuf| ScanOptions {
+            patterns_file: PathBuf::from("patterns.yaml"),
+            inline_patterns: vec!["TODO".to_string()],
+            output: Some(output),
+            extensions: vec![],
+            inputs: vec![scanme.clone()],
+            workers: Some(1),
+            incremental: false,
+            force_full: false,
+            clear_cache: false,
+            content_hash: false,
+            format,
+            include_summary: false,
+            hidden: false,
+            no_ignore: false,
+        };
+        let text_out = temp_dir.path().join("results.txt");
+        let streaming = run_scan(options(OutputFormat::Text, text_out.clone()));
+        let json_out = temp_dir.path().join("results.json");
+        let collected = run_scan(options(OutputFormat::Json, json_out.clone()));
+
+        // Restore permissions before asserting so TempDir cleanup succeeds.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let sequential = sequential.unwrap();
+        assert_eq!(sequential.len(), 1);
+        assert_eq!(sequential[0].file_path, scanme.join("ok.txt"));
+
+        let parallel = parallel.unwrap();
+        assert_eq!(parallel.len(), 1);
+        assert_eq!(parallel[0].file_path, scanme.join("ok.txt"));
+
+        streaming.expect("streaming scan must succeed despite an unreadable file");
+        let text = fs::read_to_string(&text_out).unwrap();
+        assert!(text.contains("ok.txt"), "{text}");
+        assert!(!text.contains("locked.txt"), "{text}");
+
+        collected.expect("collected scan must succeed despite an unreadable file");
+        let json = fs::read_to_string(&json_out).unwrap();
+        assert!(json.contains("ok.txt"), "{json}");
+        assert!(!json.contains("locked.txt"), "{json}");
     }
 
     fn aws_key_scanner() -> Scanner {

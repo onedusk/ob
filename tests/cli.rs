@@ -124,6 +124,55 @@ fn scan_reports_resolved_patterns_file_on_stderr_not_in_results() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn scan_warns_and_continues_on_unreadable_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Audit finding 5 repro: an unreadable *file* (vs directory) killed the
+    // whole scan with `Error: Io(... PermissionDenied ...)` and exit 1.
+    let temp = TempDir::new().unwrap();
+    let scanme = temp.path().join("scanme");
+    fs::create_dir(&scanme).unwrap();
+    fs::write(scanme.join("ok.txt"), "hello TODO world\n").unwrap();
+    let locked = scanme.join("locked.txt");
+    fs::write(&locked, "TODO locked\n").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+    // Streaming path (text to stdout).
+    ob().arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg(&scanme)
+        .assert()
+        .success()
+        .stdout(contains("ok.txt"))
+        .stderr(contains("locked.txt"));
+
+    // Collected path (json to a file outside the scanned tree).
+    let out = temp.path().join("results.json");
+    ob().arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("-f")
+        .arg("json")
+        .arg("-o")
+        .arg(&out)
+        .arg(&scanme)
+        .assert()
+        .success()
+        .stderr(contains("locked.txt"));
+
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+
+    let json = fs::read_to_string(&out).unwrap();
+    assert!(json.contains("ok.txt"), "{json}");
+    assert!(
+        !json.contains("TODO locked"),
+        "the unreadable file must be skipped, not matched: {json}"
+    );
+}
+
 #[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
