@@ -444,6 +444,144 @@ fn replace_dry_run_previews_changed_lines() {
 }
 
 #[test]
+fn replace_accepts_positional_directory_inputs() {
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    let lib = temp.path().join("lib");
+    let other = temp.path().join("other");
+    for d in [&src, &lib, &other] {
+        fs::create_dir(d).unwrap();
+        fs::write(d.join("a.txt"), "alpha one\n").unwrap();
+    }
+
+    ob().arg("replace")
+        .arg(&src)
+        .arg(&lib)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .arg("--no-backup")
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(src.join("a.txt")).unwrap(), "beta one\n");
+    assert_eq!(fs::read_to_string(lib.join("a.txt")).unwrap(), "beta one\n");
+    assert_eq!(
+        fs::read_to_string(other.join("a.txt")).unwrap(),
+        "alpha one\n",
+        "a directory not named as an input must be untouched"
+    );
+}
+
+#[test]
+fn replace_accepts_a_single_file_input() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("target.txt"), "alpha one\n").unwrap();
+    fs::write(dir.join("sibling.txt"), "alpha two\n").unwrap();
+
+    ob().arg("replace")
+        .arg(dir.join("target.txt"))
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .arg("--no-backup")
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(dir.join("target.txt")).unwrap(),
+        "beta one\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("sibling.txt")).unwrap(),
+        "alpha two\n",
+        "a sibling of an explicit file input must be untouched"
+    );
+}
+
+#[test]
+fn replace_mixed_file_and_dir_inputs_process_each_file_once() {
+    // The same file named explicitly and reached via a directory walk must be
+    // transformed once: X -> XX applied twice would leave XXXX behind.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("a.txt"), "X\n").unwrap();
+
+    ob().arg("replace")
+        .arg(dir.join("a.txt"))
+        .arg(dir)
+        .arg("-p")
+        .arg("X")
+        .arg("-r")
+        .arg("XX")
+        .arg("--no-backup")
+        .arg("-w")
+        .arg("1")
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "XX\n");
+}
+
+#[test]
+fn replace_legacy_dir_flag_appends_to_positional_inputs() {
+    let temp = TempDir::new().unwrap();
+    let src = temp.path().join("src");
+    let lib = temp.path().join("lib");
+    for d in [&src, &lib] {
+        fs::create_dir(d).unwrap();
+        fs::write(d.join("a.txt"), "alpha one\n").unwrap();
+    }
+
+    ob().arg("replace")
+        .arg(&src)
+        .arg("-d")
+        .arg(&lib)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .arg("--no-backup")
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(src.join("a.txt")).unwrap(), "beta one\n");
+    assert_eq!(
+        fs::read_to_string(lib.join("a.txt")).unwrap(),
+        "beta one\n",
+        "the legacy -d directory must be processed alongside positional inputs"
+    );
+}
+
+#[test]
+fn replace_nonexistent_input_errors_like_scan() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("a.txt"), "alpha one\n").unwrap();
+
+    ob().arg("replace")
+        .arg(dir)
+        .arg(dir.join("missing"))
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .failure()
+        .stderr(contains("Input path not found"))
+        .stderr(contains("missing"));
+
+    assert_eq!(
+        fs::read_to_string(dir.join("a.txt")).unwrap(),
+        "alpha one\n",
+        "no file may be modified when an input path is invalid"
+    );
+}
+
+#[test]
 fn mismatched_patterns_replacements_config_is_rejected_and_file_untouched() {
     let temp = TempDir::new().unwrap();
     let work = temp.path().join("work");
@@ -647,14 +785,21 @@ fn list_presets_runs_without_dir_and_lists_every_preset() {
 }
 
 #[test]
-fn replace_without_dir_or_list_presets_is_a_helpful_error() {
+fn replace_without_inputs_or_list_presets_is_a_helpful_error() {
     ob().arg("replace")
         .arg("--preset")
         .arg("trim-whitespace")
         .assert()
         .failure()
+        .stderr(contains("input"))
         .stderr(contains("--dir"))
         .stderr(contains("--list-presets"));
+
+    // The bare-`ob replace` banner names the positional grammar, not --dir.
+    ob().arg("replace")
+        .assert()
+        .failure()
+        .stderr(contains("<INPUTS>"));
 }
 
 #[test]

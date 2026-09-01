@@ -7,6 +7,7 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::{Captures, Regex};
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -322,8 +323,8 @@ pub struct ReplaceOptions {
     pub pattern: Option<String>,
     /// The replacement string for `pattern`.
     pub replacement: Option<String>,
-    /// The directory to process.
-    pub dir: PathBuf,
+    /// The input files and/or directories to process.
+    pub inputs: Vec<PathBuf>,
     /// File extensions to include. Empty means all files.
     pub extensions: Vec<String>,
     /// Directory names to exclude.
@@ -342,7 +343,8 @@ pub struct ReplaceOptions {
 ///
 /// This function orchestrates the entire replacement process:
 /// 1. It loads the configuration from a preset, a file, or command-line arguments.
-/// 2. It walks the target directory to find all files to be processed.
+/// 2. It collects the files to process from the inputs (walking directories,
+///    taking explicit files as given), deduplicating files reached twice.
 /// 3. It uses a Rayon thread pool to process the files in parallel.
 /// 4. It collects and prints summary statistics.
 pub fn run_replace(options: ReplaceOptions) -> Result<()> {
@@ -351,7 +353,7 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
         config_file,
         pattern,
         replacement,
-        dir,
+        inputs,
         extensions,
         exclude,
         no_backup,
@@ -371,8 +373,22 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
         println!("Using preset: {}", preset_name.get_name());
         load_preset(&preset_type)
     } else if let Some(cfg_path) = config_file {
-        // Use config file
-        let resolved_path = ConfigLoader::find_config(&cfg_path, &dir)?;
+        // Use config file. Resolve it relative to the first directory input
+        // (or the first file's parent), so `-c name.yaml` keeps finding
+        // configs that live in the processed tree, as it did with --dir.
+        let config_dir = inputs
+            .iter()
+            .find(|p| p.is_dir())
+            .cloned()
+            .or_else(|| {
+                inputs
+                    .iter()
+                    .find(|p| p.is_file())
+                    .and_then(|f| f.parent())
+                    .map(Path::to_path_buf)
+            })
+            .unwrap_or_else(|| PathBuf::from("."));
+        let resolved_path = ConfigLoader::find_config(&cfg_path, &config_dir)?;
         println!("Using config file: {}", resolved_path.display());
         ConfigLoader::load_replace_config(&resolved_path)?
     } else if let Some(pat) = pattern {
@@ -414,37 +430,64 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
     // Create replacer
     let replacer = Arc::new(Replacer::new(config)?);
 
-    // Collect all files
-    let mut all_files = Vec::new();
-    let mut walker = WalkBuilder::new(&dir);
-    walker.standard_filters(true); // Respect .gitignore
-
-    for entry in walker.build() {
-        // A single unreadable entry (e.g. a permission-denied subdirectory)
-        // must not kill the whole run, matching scan's behavior.
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                eprintln!("Warning: skipping unreadable path: {e}");
-                continue;
-            }
-        };
-        let path = entry.path();
-
-        // Check if path should be excluded
-        let should_exclude = exclude_dirs
-            .iter()
-            .any(|ex| path.components().any(|c| c.as_os_str() == ex.as_str()));
-
-        // Never process .bak backups: rewriting a backup's content (and
-        // stacking a .bak.bak on top) would make undo restore content the
-        // original file never held.
-        if !should_exclude
-            && path.is_file()
-            && !is_backup_file(path)
-            && should_process_file(path, &exts)
-        {
+    // Collect all files. A file reached twice (explicitly and via a directory
+    // walk, or via overlapping directories) must be processed once: applying
+    // the replacement twice would double-transform content and race the
+    // parallel atomic writes. Paths are deduplicated by canonical form so
+    // different spellings of one file collapse.
+    let mut all_files: Vec<PathBuf> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut add_file = |path: &Path| {
+        let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if seen.insert(key) {
             all_files.push(path.to_path_buf());
+        }
+    };
+
+    for input in &inputs {
+        if input.is_file() {
+            // Explicit files pass the same filters scan applies to explicit
+            // file inputs: the extension filter applies, and .bak backups are
+            // never treated as input (binary files are skipped at processing
+            // time, exactly as for walked files).
+            if !is_backup_file(input) && should_process_file(input, &exts) {
+                add_file(input);
+            }
+        } else if input.is_dir() {
+            let mut walker = WalkBuilder::new(input);
+            walker.standard_filters(true); // Respect .gitignore
+
+            for entry in walker.build() {
+                // A single unreadable entry (e.g. a permission-denied
+                // subdirectory) must not kill the whole run, matching scan's
+                // behavior.
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) => {
+                        eprintln!("Warning: skipping unreadable path: {e}");
+                        continue;
+                    }
+                };
+                let path = entry.path();
+
+                // Check if path should be excluded
+                let should_exclude = exclude_dirs
+                    .iter()
+                    .any(|ex| path.components().any(|c| c.as_os_str() == ex.as_str()));
+
+                // Never process .bak backups: rewriting a backup's content
+                // (and stacking a .bak.bak on top) would make undo restore
+                // content the original file never held.
+                if !should_exclude
+                    && path.is_file()
+                    && !is_backup_file(path)
+                    && should_process_file(path, &exts)
+                {
+                    add_file(path);
+                }
+            }
+        } else {
+            return Err(format!("Input path not found: {}", input.display()).into());
         }
     }
 
@@ -852,7 +895,7 @@ mod tests {
             config_file: Some(config_path),
             pattern: None,
             replacement: None,
-            dir: dir.to_path_buf(),
+            inputs: vec![dir.to_path_buf()],
             extensions: vec![],
             exclude: vec![],
             no_backup: false, // backups enabled, none should be created
@@ -885,7 +928,7 @@ mod tests {
             config_file: None,
             pattern: Some("AAA".into()),
             replacement: Some("BBB".into()),
-            dir: dir.to_path_buf(),
+            inputs: vec![dir.to_path_buf()],
             extensions: vec![".".to_string()],
             exclude: vec![],
             no_backup: true,
@@ -922,7 +965,7 @@ mod tests {
             config_file: Some(config_path),
             pattern: None,
             replacement: None,
-            dir: dir.to_path_buf(),
+            inputs: vec![dir.to_path_buf()],
             extensions: vec!["py".to_string()], // explicit -x must win over the config's [js]
             exclude: vec![],
             no_backup: true,
@@ -965,7 +1008,7 @@ mod tests {
             config_file: Some(config_path),
             pattern: None,
             replacement: None,
-            dir: dir.to_path_buf(),
+            inputs: vec![dir.to_path_buf()],
             extensions: vec!["txt".to_string()],
             // explicit --exclude must win over the config's [vendor]
             exclude: vec!["generated".to_string()],
@@ -985,6 +1028,133 @@ mod tests {
             fs::read_to_string(dir.join("generated").join("b.txt")).unwrap(),
             "AAA\n",
             "CLI-excluded directory must be skipped"
+        );
+    }
+
+    #[test]
+    fn test_explicit_file_input_is_processed_and_filtered() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.py"), "alpha\n").unwrap();
+        fs::write(dir.join("b.py"), "alpha\n").unwrap();
+
+        let run = |inputs: Vec<PathBuf>, extensions: Vec<String>| {
+            run_replace(ReplaceOptions {
+                preset: None,
+                config_file: None,
+                pattern: Some("alpha".into()),
+                replacement: Some("beta".into()),
+                inputs,
+                extensions,
+                exclude: vec![],
+                no_backup: true,
+                dry_run: false,
+                verbose: false,
+                workers: Some(1),
+            })
+        };
+
+        // Only the explicitly named file is processed; its sibling is not.
+        run(vec![dir.join("a.py")], vec![]).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("a.py")).unwrap(), "beta\n");
+        assert_eq!(fs::read_to_string(dir.join("b.py")).unwrap(), "alpha\n");
+
+        // The extension filter applies to explicit files, as in scan.
+        run(vec![dir.join("b.py")], vec!["js".into()]).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("b.py")).unwrap(),
+            "alpha\n",
+            "-x must filter explicit file inputs too"
+        );
+    }
+
+    #[test]
+    fn test_explicit_bak_file_input_is_skipped() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.txt.bak"), "alpha\n").unwrap();
+
+        run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("alpha".into()),
+            replacement: Some("beta".into()),
+            inputs: vec![dir.join("a.txt.bak")],
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+            "alpha\n",
+            "an explicitly named .bak backup must never be rewritten"
+        );
+    }
+
+    #[test]
+    fn test_mixed_file_and_dir_inputs_process_each_file_once() {
+        // The same file reached explicitly (under a different spelling) and
+        // via a directory walk must be processed once: X -> XX applied twice
+        // would leave XXXX behind.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.txt"), "X\n").unwrap();
+
+        run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("X".into()),
+            replacement: Some("XX".into()),
+            inputs: vec![dir.join(".").join("a.txt"), dir.to_path_buf()],
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "XX\n",
+            "a deduplicated file must be transformed exactly once"
+        );
+    }
+
+    #[test]
+    fn test_nonexistent_input_path_errors_and_touches_nothing() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.txt"), "alpha\n").unwrap();
+
+        let err = run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("alpha".into()),
+            replacement: Some("beta".into()),
+            inputs: vec![dir.to_path_buf(), dir.join("missing")],
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
+        .expect_err("a missing input path must be an error");
+        assert!(
+            err.to_string().contains("Input path not found"),
+            "error must name the missing path, like scan: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "alpha\n",
+            "no file may be modified when an input path is invalid"
         );
     }
 
@@ -1427,7 +1597,7 @@ mod tests {
             config_file: None,
             pattern: Some("alpha".into()),
             replacement: Some("beta".into()),
-            dir: dir.to_path_buf(),
+            inputs: vec![dir.to_path_buf()],
             extensions: vec![],
             exclude: vec![],
             no_backup: true,
@@ -1470,7 +1640,7 @@ mod tests {
             config_file: None,
             pattern: Some("alpha".into()),
             replacement: Some("beta".into()),
-            dir: dir.to_path_buf(),
+            inputs: vec![dir.to_path_buf()],
             extensions: vec![],
             exclude: vec![],
             no_backup: true,
@@ -1518,7 +1688,7 @@ mod tests {
             config_file: None,
             pattern: Some("alpha".into()),
             replacement: Some("beta".into()),
-            dir: dir.to_path_buf(),
+            inputs: vec![dir.to_path_buf()],
             extensions: vec![],
             exclude: vec![],
             no_backup: true,
@@ -1625,7 +1795,7 @@ mod tests {
                 config_file: None,
                 pattern: Some(pattern.into()),
                 replacement: Some(replacement.into()),
-                dir: dir.to_path_buf(),
+                inputs: vec![dir.to_path_buf()],
                 extensions: vec![],
                 exclude: vec![],
                 no_backup: false,

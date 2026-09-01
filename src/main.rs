@@ -29,8 +29,8 @@ fn run() -> Result<()> {
         println!("⚡ Ultra-fast pattern scanner and code transformer\n");
         println!("QUICK START EXAMPLES:");
         println!("  ob scan .                              # Scan current directory");
-        println!("  ob replace -d . -p 'TODO' -r 'TODO'    # Simple replacement");
-        println!("  ob replace -d . --preset clean-debug   # Remove debug code");
+        println!("  ob replace . -p 'TODO' -r 'TODO'       # Simple replacement");
+        println!("  ob replace . --preset clean-debug      # Remove debug code");
         println!("  ob rename -d . -p 'test_(.*)' -r 'spec_$1'  # Rename files");
         println!("  ob undo -d .                           # Restore from backups\n");
         println!("Run 'ob --help' for full command list");
@@ -53,12 +53,12 @@ fn run() -> Result<()> {
                 process::exit(1);
             }
             "replace" => {
-                eprintln!("Error: Missing required argument: --dir <DIR>\n");
+                eprintln!("Error: Missing required argument: <INPUTS>\n");
                 eprintln!("USAGE EXAMPLES:");
-                eprintln!("  ob replace -d . --preset clean-debug       # Remove debug code");
-                eprintln!("  ob replace -d . -p 'TODO' -r 'TODO'        # Simple replacement");
-                eprintln!("  ob replace -d . -c config.yaml --dry-run   # Preview changes");
-                eprintln!("  ob replace -d src/ -x py --preset remove-todos");
+                eprintln!("  ob replace . --preset clean-debug          # Remove debug code");
+                eprintln!("  ob replace . -p 'TODO' -r 'TODO'           # Simple replacement");
+                eprintln!("  ob replace src/ lib/ -c config.yaml --dry-run  # Preview changes");
+                eprintln!("  ob replace main.py --preset remove-todos   # Process a single file");
                 eprintln!("  ob replace --list-presets                  # List available presets");
                 eprintln!("\nFor more options: ob replace --help");
                 process::exit(1);
@@ -143,17 +143,25 @@ fn run() -> Result<()> {
             dry_run,
             verbose,
             workers,
+            mut inputs,
         } => {
+            // -d/--dir is a legacy alias for a positional input.
+            inputs.extend(dir);
             if list_presets {
                 print!("{}", cli::preset_listing());
                 Ok(())
-            } else if let Some(dir) = dir {
+            } else if inputs.is_empty() {
+                // Inputs are optional in clap only so that --list-presets can
+                // run without one; an actual replace still needs at least one
+                // (positional, or the legacy -d/--dir alias).
+                Err("replace requires at least one input path (e.g. `ob replace . --preset clean-debug`; -d/--dir works as a legacy alias); run `ob replace --list-presets` to see the available presets".into())
+            } else {
                 replacer::run_replace(replacer::ReplaceOptions {
                     preset,
                     config_file: config,
                     pattern,
                     replacement,
-                    dir,
+                    inputs,
                     extensions,
                     exclude,
                     no_backup,
@@ -161,10 +169,6 @@ fn run() -> Result<()> {
                     verbose,
                     workers,
                 })
-            } else {
-                // --dir is optional in clap only so that --list-presets can
-                // run without one; an actual replace still needs it.
-                Err("replace requires --dir <DIR> (e.g. `ob replace -d . --preset clean-debug`); run `ob replace --list-presets` to see the available presets".into())
             }
         }
         Commands::Undo { dir, keep_backups } => replacer::run_undo(dir, keep_backups),

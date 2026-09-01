@@ -24,7 +24,7 @@ Designed for large codebases with:
 QUICK EXAMPLES:
   ob scan .                           # Scan current dir using ./patterns.yaml
   ob scan -e 'TODO|FIXME' .           # Scan with an inline regex (no YAML file)
-  ob replace -d . --preset clean-debug # Remove all debug code
+  ob replace . --preset clean-debug   # Remove all debug code
   ob rename -d . -p 'test_(.*)' -r 'spec_$1'  # Rename test files
   ob undo -d .                        # Restore from backups
 
@@ -146,10 +146,10 @@ pub enum Commands {
     /// Replace patterns in files (with automatic backups)
     ///
     /// EXAMPLES:
-    ///   ob replace -d . --preset clean-debug       # Remove all debug code
-    ///   ob replace -d . -p 'TODO' -r 'TODO'        # Simple replacement
-    ///   ob replace -d . -c config.yaml --dry-run   # Preview changes
-    ///   ob replace -d src/ -x py --preset remove-todos
+    ///   ob replace . --preset clean-debug          # Remove all debug code
+    ///   ob replace . -p 'TODO' -r 'TODO'           # Simple replacement
+    ///   ob replace src/ lib/ -c config.yaml --dry-run  # Preview changes
+    ///   ob replace main.py --preset remove-todos   # Process a single file
     ///   ob replace --list-presets                  # List available presets
     ///
     /// Config file format (config.yaml):
@@ -185,7 +185,7 @@ pub enum Commands {
         #[arg(short, long)]
         replacement: Option<String>,
 
-        /// The directory to process. Required unless --list-presets is given.
+        /// The directory to process (legacy alias for a positional input).
         #[arg(short, long)]
         dir: Option<PathBuf>,
 
@@ -212,6 +212,10 @@ pub enum Commands {
         /// The number of parallel worker threads to use.
         #[arg(short, long)]
         workers: Option<usize>,
+
+        /// The input files or directories to process. At least one input
+        /// (positional or -d/--dir) is required unless --list-presets is given.
+        inputs: Vec<PathBuf>,
     },
 
     /// Restore files from backups (undo replacements)
@@ -338,6 +342,44 @@ mod tests {
     #[test]
     fn test_replace_list_presets_parses_without_dir() {
         assert!(Args::try_parse_from(["ob", "replace", "--list-presets"]).is_ok());
+    }
+
+    #[test]
+    fn test_replace_accepts_positional_inputs_and_legacy_dir() {
+        // Positional inputs mirror scan's grammar; -d stays a working legacy
+        // alias, alone or combined with positional inputs.
+        for (argv, positionals, has_dir) in [
+            (
+                &["ob", "replace", "src", "lib", "--preset", "clean-debug"][..],
+                2,
+                false,
+            ),
+            (
+                &["ob", "replace", "-d", ".", "--preset", "clean-debug"],
+                0,
+                true,
+            ),
+            (
+                &[
+                    "ob",
+                    "replace",
+                    "src",
+                    "-d",
+                    "lib",
+                    "--preset",
+                    "clean-debug",
+                ],
+                1,
+                true,
+            ),
+        ] {
+            let args = Args::try_parse_from(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+            let Commands::Replace { inputs, dir, .. } = args.command else {
+                panic!("{argv:?} must parse as replace");
+            };
+            assert_eq!(inputs.len(), positionals, "{argv:?} positional inputs");
+            assert_eq!(dir.is_some(), has_dir, "{argv:?} legacy -d");
+        }
     }
 
     #[test]

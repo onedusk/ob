@@ -60,18 +60,21 @@ ob scan -p patterns.yaml -x js,ts,py /path/to/scan
 ### Replace patterns
 
 ```bash
-# Replace using YAML configuration
-ob replace --dir /path --config file_name.yaml --dry-run
-
 # Preview changes without applying (dry-run)
-ob replace --dir /path --config replace_config.yaml --dry-run
+ob replace /path --config replace_config.yaml --dry-run
 
 # Single pattern replacement
-ob replace --dir /path --pattern "TODO" --replacement "[TODO]"
+ob replace /path --pattern "TODO" --replacement "[TODO]"
+
+# Replace across multiple directories, or in a single file
+ob replace src/ lib/ --pattern "TODO" --replacement "[TODO]"
+ob replace main.py --preset remove-todos
 
 # Replace with specific extensions
-ob replace --dir /path --config replace_config.yaml -x js,ts
+ob replace /path --config replace_config.yaml -x js,ts
 ```
+
+`--dir /path` is still accepted as a legacy alias for a positional input.
 
 ### Rename files
 
@@ -184,7 +187,7 @@ blocks:
 ```
 
 ```bash
-ob replace --dir /project --config remove_copyright.yaml
+ob replace /project --config remove_copyright.yaml
 ```
 
 ### Clean up debug code
@@ -275,12 +278,13 @@ Options:
 - `-c, --config <FILE>` - YAML configuration file
 - `-p, --pattern <PATTERN>` - Single pattern to match
 - `-r, --replacement <TEXT>` - Replacement text
-- `-d, --dir <PATH>` - Directory to process
+- `-d, --dir <PATH>` - Directory to process (legacy alias for a positional input)
 - `-x, --ext <EXTENSIONS>` - File extensions to include
 - `-e, --exclude <DIRS>` - Directories to exclude
 - `--no-backup` - Don't create backup files
 - `--dry-run` - Preview changes without applying
 - `-w, --workers <N>` - Number of threads to use
+- `<INPUTS>...` - Files or directories to process (like `scan`); the same file reached twice is processed once
 
 ### `undo`
 
