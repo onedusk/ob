@@ -290,6 +290,8 @@ Note: Output order is not guaranteed when using multiple workers. Use `-w 1` or 
 
 The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/oober/` on Linux, `~/Library/Caches/oober/` on macOS), one JSON file per scanned project. It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
 
+`--no-cache-content` keeps matched text out of the on-disk cache entirely: only pattern names, file fingerprints, and line numbers are stored, and on a cache hit the matched lines are re-read from the unchanged files to reconstruct the output (if a re-read fails, the file is re-scanned). This keeps the incremental speedup without persisting secrets to disk; it requires `--incremental`.
+
 ### `replace`
 
 Replace or remove patterns in files.

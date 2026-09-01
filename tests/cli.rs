@@ -276,6 +276,156 @@ fn incremental_scan_with_empty_xdg_cache_home_does_not_cache_in_project() {
     );
 }
 
+/// Returns the contents of the single per-project cache file under
+/// `<cache>/oober/`.
+fn read_cache_file(cache: &Path) -> String {
+    let mut entries: Vec<_> = fs::read_dir(cache.join("oober"))
+        .expect("cache dir must exist")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    assert_eq!(entries.len(), 1, "expected exactly one cache file");
+    fs::read_to_string(entries.pop().unwrap()).unwrap()
+}
+
+#[test]
+fn incremental_no_cache_content_keeps_matched_text_out_of_cache() {
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    let secret = "hunter2-FAKE-SECRET-TOKEN";
+    fs::write(
+        work.join("secret.txt"),
+        format!("password = {secret}\nplain line\n"),
+    )
+    .unwrap();
+
+    let scan = |incremental: bool, out: &Path| {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("FAKE-SECRET-TOKEN")
+            .arg("-w")
+            .arg("1")
+            .arg("-o")
+            .arg(out);
+        if incremental {
+            cmd.arg("--incremental").arg("--no-cache-content");
+        }
+        cmd.arg(&work);
+        cmd
+    };
+
+    // Cold run: the match is reported, but the cache on disk must hold only
+    // its location, never the matched text.
+    let out1 = temp.path().join("out1.txt");
+    scan(true, &out1).assert().success();
+    assert!(
+        fs::read_to_string(&out1).unwrap().contains(secret),
+        "the scan results must still show the matched line"
+    );
+    let cached = read_cache_file(&cache);
+    assert!(
+        !cached.contains(secret),
+        "the cache must not contain the matched text: {cached}"
+    );
+    assert!(
+        cached.contains("secret.txt"),
+        "the cache must still record the match location: {cached}"
+    );
+
+    // Warm run (cache hit): the emitted results reconstruct the full matched
+    // line and are identical to a fresh non-incremental scan.
+    let out2 = temp.path().join("out2.txt");
+    scan(true, &out2).assert().success();
+    let fresh = temp.path().join("fresh.txt");
+    scan(false, &fresh).assert().success();
+    let warm_results = fs::read_to_string(&out2).unwrap();
+    assert!(
+        warm_results.contains(&format!("password = {secret}")),
+        "a cache hit must reconstruct the full matched line: {warm_results}"
+    );
+    assert_eq!(
+        warm_results,
+        fs::read_to_string(&fresh).unwrap(),
+        "warm incremental output must match a fresh non-incremental scan"
+    );
+}
+
+#[test]
+fn incremental_no_cache_content_falls_back_to_rescan_when_cached_line_vanishes() {
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    let file = work.join("s.txt");
+    let original = "padding line\nkey AKIAAAAAAAAAAAAAAAAA\n";
+    fs::write(&file, original).unwrap();
+
+    let scan = || {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("AKIA[0-9A-Z]{16}")
+            .arg("--incremental")
+            .arg("--no-cache-content")
+            .arg(&work);
+        cmd
+    };
+
+    // Prime the content-less cache (match recorded on line 2).
+    scan()
+        .assert()
+        .success()
+        .stdout(contains("AKIAAAAAAAAAAAAAAAAA"));
+
+    // Rewrite the file with the same byte length but a single line, so the
+    // recorded line 2 no longer exists, and restore the modification time so
+    // the quick fingerprint still reports the file unchanged.
+    let modified = fs::metadata(&file).unwrap().modified().unwrap();
+    let replacement = "key AKIABBBBBBBBBBBBBBBBxxxxxxxxxxxxxx";
+    assert_eq!(
+        replacement.len(),
+        original.len(),
+        "the rewrite must keep the file size for the fingerprint to hold"
+    );
+    fs::write(&file, replacement).unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+
+    // The warm run must not fail: reconstruction fails, warns, and the file
+    // is re-scanned fresh — surfacing its current content.
+    scan()
+        .assert()
+        .success()
+        .stdout(contains("AKIABBBBBBBBBBBBBBBB"))
+        .stderr(contains("re-scanning"));
+}
+
+#[test]
+fn no_cache_content_without_incremental_is_rejected() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("t.txt");
+    fs::write(&file, "TODO\n").unwrap();
+
+    ob().arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("--no-cache-content")
+        .arg(temp.path())
+        .assert()
+        .failure()
+        .stderr(contains("--no-cache-content"))
+        .stderr(contains("--incremental"));
+}
+
 #[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();

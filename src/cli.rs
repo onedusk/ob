@@ -119,6 +119,11 @@ pub enum Commands {
         #[arg(long = "content-hash")]
         content_hash: bool,
 
+        /// Do not store matched line contents in the incremental scan cache;
+        /// they are re-read from the unchanged files on cache hits. Requires --incremental.
+        #[arg(long = "no-cache-content")]
+        no_cache_content: bool,
+
         /// The output format for the scan results.
         #[arg(
             short = 'f',

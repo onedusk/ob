@@ -43,7 +43,10 @@ pub struct CachedMatch {
     pub pattern_name: String,
     /// The line number where the match occurred.
     pub line_number: usize,
-    /// The content of the line that matched.
+    /// The content of the line that matched. Empty when the cache was written
+    /// with `--no-cache-content`; consumers reconstruct the text by re-reading
+    /// the recorded line from the (fingerprint-unchanged) file.
+    #[serde(default)]
     pub line_content: String,
 }
 
@@ -306,6 +309,18 @@ mod tests {
             "empty XDG_CACHE_HOME must not yield a relative cache dir"
         );
         assert_eq!(empty, StateManager::base_cache_dir(None));
+    }
+
+    #[test]
+    fn test_cached_match_line_content_defaults_to_empty() {
+        // A cache entry without line_content (the field is only meaningful
+        // when matched text is persisted) must keep parsing: the field
+        // defaults to empty instead of failing deserialization.
+        let m: CachedMatch =
+            serde_json::from_str(r#"{"pattern_name":"p","line_number":3}"#).unwrap();
+        assert_eq!(m.pattern_name, "p");
+        assert_eq!(m.line_number, 3);
+        assert!(m.line_content.is_empty());
     }
 
     #[test]

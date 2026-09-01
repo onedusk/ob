@@ -287,6 +287,8 @@ pub struct ScanOptions {
     pub clear_cache: bool,
     /// Use content hashes instead of timestamps for change detection.
     pub content_hash: bool,
+    /// Do not persist matched line contents in the incremental cache.
+    pub no_cache_content: bool,
     /// The output format for the scan results.
     pub format: OutputFormat,
     /// Append a summary of scan statistics (text format only).
@@ -317,6 +319,7 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
         force_full,
         clear_cache,
         content_hash,
+        no_cache_content,
         format,
         include_summary,
         hidden,
@@ -327,6 +330,12 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
     // instead of silently ignoring the flag.
     if include_summary && !matches!(format, OutputFormat::Text) {
         return Err("--summary is only supported with --format text".into());
+    }
+
+    // The flag only changes what the incremental cache stores; reject it
+    // without --incremental instead of silently ignoring it.
+    if no_cache_content && !incremental {
+        return Err("--no-cache-content is only supported with --incremental".into());
     }
 
     let exts = require_valid_extensions(&extensions)?;
@@ -419,12 +428,19 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
                             },
                         );
                         if let Some(cached) = state.scan_results.get(file) {
-                            cached_matches.extend(cached.iter().map(|m| Match {
-                                pattern_name: m.pattern_name.clone(),
-                                file_path: file.to_path_buf(),
-                                line_number: m.line_number,
-                                line_content: m.line_content.clone(),
-                            }));
+                            match resolve_cached_matches(file, cached) {
+                                Ok(resolved) => cached_matches.extend(resolved),
+                                Err(e) => {
+                                    // Content-less cache entries (written under
+                                    // --no-cache-content) could not be turned
+                                    // back into matches; re-scan the file fresh.
+                                    eprintln!(
+                                        "Warning: could not reconstruct cached matches for '{}': {e}; re-scanning",
+                                        file.display()
+                                    );
+                                    changed_files.push(file.to_path_buf());
+                                }
+                            }
                         }
                         continue;
                     }
@@ -466,8 +482,14 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
     if incremental {
         let manager = state_manager.expect("State manager missing");
         let fp = fingerprinter.expect("Fingerprinter missing");
-        let scan_state =
-            build_scan_state(&files, known_fingerprints, &all_matches, &fp, patterns_hash)?;
+        let scan_state = build_scan_state(
+            &files,
+            known_fingerprints,
+            &all_matches,
+            &fp,
+            patterns_hash,
+            no_cache_content,
+        )?;
         manager.save_state(&scan_state)?;
     }
 
@@ -563,6 +585,7 @@ fn build_scan_state(
     matches: &[Match],
     fingerprinter: &Fingerprinter,
     patterns_hash: String,
+    no_cache_content: bool,
 ) -> Result<ScanState> {
     let now = SystemTime::now();
     let mut file_states = HashMap::new();
@@ -591,11 +614,14 @@ fn build_scan_state(
         last_scan: now,
         files: file_states,
         patterns_hash,
-        scan_results: build_scan_results(matches),
+        scan_results: build_scan_results(matches, no_cache_content),
     })
 }
 
-fn build_scan_results(matches: &[Match]) -> HashMap<PathBuf, Vec<CachedMatch>> {
+fn build_scan_results(
+    matches: &[Match],
+    no_cache_content: bool,
+) -> HashMap<PathBuf, Vec<CachedMatch>> {
     let mut results: HashMap<PathBuf, Vec<CachedMatch>> = HashMap::new();
 
     for m in matches {
@@ -605,11 +631,72 @@ fn build_scan_results(matches: &[Match]) -> HashMap<PathBuf, Vec<CachedMatch>> {
             .push(CachedMatch {
                 pattern_name: m.pattern_name.clone(),
                 line_number: m.line_number,
-                line_content: m.line_content.clone(),
+                // Under --no-cache-content the matched text stays out of the
+                // on-disk cache; only the location is persisted.
+                line_content: if no_cache_content {
+                    String::new()
+                } else {
+                    m.line_content.clone()
+                },
             });
     }
 
     results
+}
+
+/// Turns a fingerprint-unchanged file's cached matches back into [`Match`]es.
+///
+/// Entries whose `line_content` is empty (written under `--no-cache-content`)
+/// are reconstructed by re-reading just the recorded line numbers from the
+/// file in a single pass. Fails if the file cannot be read or a recorded line
+/// no longer exists — despite the unchanged fingerprint — so the caller can
+/// fall back to re-scanning the file fresh.
+fn resolve_cached_matches(file: &Path, cached: &[CachedMatch]) -> Result<Vec<Match>> {
+    let needed: HashSet<usize> = cached
+        .iter()
+        .filter(|m| m.line_content.is_empty())
+        .map(|m| m.line_number)
+        .collect();
+
+    let mut reconstructed: HashMap<usize, String> = HashMap::new();
+    if let Some(&max_needed) = needed.iter().max() {
+        let mut reader = BufReader::new(File::open(file)?);
+        let mut line_buf = Vec::new();
+        let mut line_number = 0usize;
+        while line_number < max_needed {
+            line_buf.clear();
+            let bytes_read = reader.read_until(b'\n', &mut line_buf)?;
+            if bytes_read == 0 {
+                break;
+            }
+            line_number += 1;
+            if !needed.contains(&line_number) {
+                continue;
+            }
+            if line_buf.last() == Some(&b'\n') {
+                line_buf.pop();
+            }
+            reconstructed.insert(line_number, String::from_utf8_lossy(&line_buf).into_owned());
+        }
+        if reconstructed.len() != needed.len() {
+            // The loop inserts every needed line it reaches, so a shortfall
+            // means EOF came first — max_needed is always among the missing.
+            return Err(format!("cached line {max_needed} is beyond the end of the file").into());
+        }
+    }
+
+    Ok(cached
+        .iter()
+        .map(|m| Match {
+            pattern_name: m.pattern_name.clone(),
+            file_path: file.to_path_buf(),
+            line_number: m.line_number,
+            line_content: match reconstructed.get(&m.line_number) {
+                Some(content) => content.clone(),
+                None => m.line_content.clone(),
+            },
+        })
+        .collect())
 }
 
 fn stream_text_output(
@@ -751,6 +838,7 @@ mod tests {
             force_full: false,
             clear_cache: false,
             content_hash: false,
+            no_cache_content: false,
             format,
             include_summary: true,
             hidden: false,
@@ -794,6 +882,7 @@ mod tests {
             force_full: false,
             clear_cache: false,
             content_hash: false,
+            no_cache_content: false,
             format: OutputFormat::Text,
             include_summary: false,
             hidden: false,
@@ -885,6 +974,7 @@ mod tests {
             force_full: false,
             clear_cache: false,
             content_hash: false,
+            no_cache_content: false,
             format,
             include_summary: false,
             hidden: false,
@@ -1024,6 +1114,7 @@ mod tests {
             &[],
             &fingerprinter,
             "patterns".to_string(),
+            false,
         );
         fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -1039,12 +1130,135 @@ mod tests {
             &[],
             &fingerprinter,
             "patterns".to_string(),
+            false,
         )
         .unwrap();
         assert_eq!(
             state.files[&fresh].hash,
             fingerprinter.fingerprint_file(&fresh).unwrap().hash
         );
+    }
+
+    #[test]
+    fn test_no_cache_content_requires_incremental() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let err = run_scan(ScanOptions {
+            patterns_file: PathBuf::from("patterns.yaml"),
+            inline_patterns: vec!["TODO".to_string()],
+            output: None,
+            extensions: vec![],
+            inputs: vec![temp_dir.path().to_path_buf()],
+            workers: Some(1),
+            incremental: false,
+            force_full: false,
+            clear_cache: false,
+            content_hash: false,
+            no_cache_content: true,
+            format: OutputFormat::Text,
+            include_summary: false,
+            hidden: false,
+            no_ignore: false,
+        })
+        .expect_err("--no-cache-content without --incremental must be rejected");
+        assert!(
+            err.to_string().contains("--no-cache-content")
+                && err.to_string().contains("--incremental"),
+            "error must name both flags: {err}"
+        );
+    }
+
+    #[test]
+    fn test_no_cache_content_stores_empty_line_content() {
+        let matches = vec![
+            Match {
+                pattern_name: "secret".into(),
+                file_path: PathBuf::from("a.txt"),
+                line_number: 3,
+                line_content: "password = hunter2".into(),
+            },
+            Match {
+                pattern_name: "todo".into(),
+                file_path: PathBuf::from("b.txt"),
+                line_number: 7,
+                line_content: "TODO later".into(),
+            },
+        ];
+
+        // With the flag, only the match locations are persisted.
+        let stored = build_scan_results(&matches, true);
+        assert_eq!(stored.len(), 2);
+        for cached in stored.values().flatten() {
+            assert!(
+                cached.line_content.is_empty(),
+                "no matched text may be persisted under --no-cache-content"
+            );
+        }
+        assert_eq!(stored[&PathBuf::from("a.txt")][0].pattern_name, "secret");
+        assert_eq!(stored[&PathBuf::from("a.txt")][0].line_number, 3);
+
+        // Without the flag the matched text is stored as before.
+        let stored = build_scan_results(&matches, false);
+        assert_eq!(
+            stored[&PathBuf::from("a.txt")][0].line_content,
+            "password = hunter2"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cached_matches_reconstructs_empty_content() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        fs::write(&file, "first line\nsecond line\nthird line\n").unwrap();
+
+        let cached = vec![
+            CachedMatch {
+                pattern_name: "p1".into(),
+                line_number: 1,
+                line_content: String::new(),
+            },
+            CachedMatch {
+                pattern_name: "p2".into(),
+                line_number: 2,
+                // Content-bearing entry: used as-is, no re-read needed.
+                line_content: "second line".into(),
+            },
+            CachedMatch {
+                pattern_name: "p3".into(),
+                line_number: 3,
+                line_content: String::new(),
+            },
+        ];
+
+        let resolved = resolve_cached_matches(&file, &cached).unwrap();
+        assert_eq!(resolved.len(), 3);
+        assert_eq!(resolved[0].line_content, "first line");
+        assert_eq!(resolved[1].line_content, "second line");
+        assert_eq!(resolved[2].line_content, "third line");
+        assert_eq!(resolved[0].pattern_name, "p1");
+        assert_eq!(resolved[2].line_number, 3);
+        assert_eq!(resolved[0].file_path, file);
+    }
+
+    #[test]
+    fn test_resolve_cached_matches_fails_when_line_or_file_is_gone() {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        fs::write(&file, "only line\n").unwrap();
+
+        // A recorded line beyond the end of the file must be an error the
+        // caller can fall back on, not a silently empty match.
+        let cached = vec![CachedMatch {
+            pattern_name: "p".into(),
+            line_number: 5,
+            line_content: String::new(),
+        }];
+        let err = resolve_cached_matches(&file, &cached).expect_err("line 5 does not exist");
+        assert!(err.to_string().contains("line 5"), "{err}");
+
+        // An unreadable file must be an error too.
+        let missing = temp_dir.path().join("missing.txt");
+        assert!(resolve_cached_matches(&missing, &cached).is_err());
     }
 
     #[test]
