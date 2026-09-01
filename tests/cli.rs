@@ -900,3 +900,55 @@ fn rename_collision_with_default_workers_never_loses_data() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// completions & manpage
+// ---------------------------------------------------------------------------
+
+#[test]
+fn completions_zsh_emits_a_compdef_script_for_oober() {
+    let assert = ob().arg("completions").arg("zsh").assert().success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(!stdout.is_empty(), "completion script must not be empty");
+    assert!(
+        stdout.contains("#compdef") && stdout.contains("_oober"),
+        "zsh script must be a compdef for the oober binary: {}",
+        &stdout[..stdout.len().min(200)]
+    );
+}
+
+#[test]
+fn completions_bash_emits_a_complete_registration() {
+    ob().arg("completions")
+        .arg("bash")
+        .assert()
+        .success()
+        .stdout(contains("complete"));
+}
+
+#[test]
+fn manpage_emits_a_roff_title_header() {
+    // `ob manpage` takes no arguments, so it also proves main.rs's
+    // missing-arg banner (which intercepts two-element argv by command name)
+    // does not swallow argument-less subcommands.
+    let assert = ob().arg("manpage").assert().success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    // roff output opens with a two-line apostrophe-handling preamble; the
+    // title header must follow as its own control line.
+    assert!(
+        stdout.lines().any(|l| l.starts_with(".TH oober")),
+        "man page must carry a .TH title line: {}",
+        &stdout[..stdout.len().min(200)]
+    );
+}
+
+#[test]
+fn completions_unknown_shell_is_rejected_at_parse_time() {
+    ob().arg("completions")
+        .arg("tcsh")
+        .assert()
+        .code(2)
+        .stderr(contains("invalid value 'tcsh'"));
+}

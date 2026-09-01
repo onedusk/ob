@@ -38,7 +38,11 @@ fn run() -> Result<()> {
         process::exit(0);
     }
 
-    // Check for specific commands with missing args and show examples
+    // Check for specific commands with missing args and show examples.
+    // Only the commands matched by name below are intercepted: `completions`
+    // and `manpage` must fall through to clap, since `manpage` legitimately
+    // takes no arguments and a bare `completions` gets clap's own
+    // missing-<SHELL> error.
     if args_vec.len() == 2 {
         match args_vec[1].as_str() {
             "scan" => {
@@ -181,5 +185,10 @@ fn run() -> Result<()> {
             verbose,
             workers,
         } => file_renamer::run_rename(dir, pattern, replacement, dry_run, verbose, workers),
+        Commands::Completions { shell } => {
+            cli::run_completions(shell);
+            Ok(())
+        }
+        Commands::Manpage => cli::run_manpage(),
     }
 }

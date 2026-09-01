@@ -1,5 +1,8 @@
+use crate::errors::Result;
 use crate::output_formatter::OutputFormat;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
+use std::io;
 use std::path::PathBuf;
 
 /// A blazing-fast code scanner and transformer for monoliths.
@@ -281,6 +284,27 @@ pub enum Commands {
         #[arg(short, long)]
         workers: Option<usize>,
     },
+
+    /// Generate a shell completion script on stdout
+    ///
+    /// The script is written to standard output; redirect it into your
+    /// shell's completion directory:
+    ///
+    ///   ob completions zsh > ~/.zfunc/_oober    # with ~/.zfunc in fpath
+    ///   ob completions bash > ~/.local/share/bash-completion/completions/oober
+    ///   ob completions fish > ~/.config/fish/completions/oober.fish
+    Completions {
+        /// The shell to generate a completion script for.
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
+    /// Print the roff man page on stdout
+    ///
+    /// EXAMPLES:
+    ///   ob manpage > oober.1 && man ./oober.1       # Preview without installing
+    ///   ob manpage > /usr/local/share/man/man1/oober.1
+    Manpage,
 }
 
 /// Parses command-line arguments and returns the populated `Args` struct.
@@ -305,6 +329,25 @@ pub fn preset_listing() -> String {
         }
     }
     out
+}
+
+/// Writes the completion script for `shell` to standard output.
+///
+/// The script is generated for the installed binary name (`oober`); shells
+/// resolve the `ob` alias to that name when completing, so one script covers
+/// both spellings. Nothing is written to the filesystem.
+pub fn run_completions(shell: Shell) {
+    let mut cmd = Args::command();
+    clap_complete::generate(shell, &mut cmd, "oober", &mut io::stdout());
+}
+
+/// Writes the top-level roff man page to standard output.
+///
+/// Only the top-level page is generated (subcommands appear in its
+/// SUBCOMMANDS section). Nothing is written to the filesystem.
+pub fn run_manpage() -> Result<()> {
+    clap_mangen::Man::new(Args::command()).render(&mut io::stdout())?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -42,6 +42,26 @@ cargo build --release
 # Binary will be at ./target/release/oober
 ```
 
+### Shell completions & man page
+
+Both commands write to standard output only; redirect to install:
+
+```bash
+# zsh (with ~/.zfunc in your fpath)
+ob completions zsh > ~/.zfunc/_oober
+
+# bash
+ob completions bash > ~/.local/share/bash-completion/completions/oober
+
+# fish
+ob completions fish > ~/.config/fish/completions/oober.fish
+
+# powershell and elvish are also supported
+
+# Man page (preview without installing: ob manpage > oober.1 && man ./oober.1)
+ob manpage > /usr/local/share/man/man1/oober.1
+```
+
 ## Quick Start
 
 ### Scan for patterns
@@ -174,6 +194,8 @@ The tool uses a subcommand architecture:
 - `undo`: Restore files from backups
 - `clean-backups`: Remove backup files without restoring
 - `rename`: Batch rename files using regex patterns
+- `completions`: Generate a shell completion script on stdout
+- `manpage`: Print the roff man page on stdout
 
 ## Use Cases
 
@@ -315,6 +337,16 @@ Options:
 - `-r, --replacement <TEXT>` - Replacement string
 - `--dry-run` - Preview changes without applying
 - `-w, --workers <N>` - Accepted for compatibility; renames always execute serially so collision checks cannot race
+
+### `completions`
+
+Generate a shell completion script on stdout (see "Shell completions & man page" above for install one-liners).
+
+- `<SHELL>` - One of: `bash`, `zsh`, `fish`, `powershell`, `elvish`
+
+### `manpage`
+
+Print the roff man page on stdout. Takes no arguments.
 
 ## Performance
 
