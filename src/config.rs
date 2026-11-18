@@ -333,6 +333,37 @@ blocks:
     }
 
     #[test]
+    fn test_every_shipped_config_loads() {
+        // Every top-level config/*.yaml must load with the loader for its
+        // kind and compile (config/internal/ is not shipped and not read).
+        // A new file must be given a loader here.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("config");
+        let mut checked = Vec::new();
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_str().unwrap().to_string();
+            let loaded = match name.as_str() {
+                "grammar_patterns.yaml" => ConfigLoader::load_scan_config(&path)
+                    .and_then(|config| crate::scanner::Scanner::new(config.patterns))
+                    .map(|_| ()),
+                "example.yaml" => ConfigLoader::load_replace_config(&path)
+                    .and_then(crate::replacer::Replacer::new)
+                    .map(|_| ()),
+                other => panic!("config/{other} has no loader assigned in this test"),
+            };
+            if let Err(e) = loaded {
+                panic!("config/{name} must load: {e}");
+            }
+            checked.push(name);
+        }
+        checked.sort();
+        assert_eq!(checked, ["example.yaml", "grammar_patterns.yaml"]);
+    }
+
+    #[test]
     fn test_find_config_uses_path_as_given() {
         let temp = TempDir::new().unwrap();
         let cfg = temp.path().join("direct.yaml");
