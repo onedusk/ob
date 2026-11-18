@@ -226,7 +226,9 @@ mod tests {
     #[test]
     fn test_state_persistence() {
         let temp_dir = TempDir::new().unwrap();
-        let manager = StateManager::new(temp_dir.path()).unwrap();
+        // `StateManager::new` would write into the real user cache dir.
+        let manager =
+            StateManager::with_state_dir(temp_dir.path().join("cache"), temp_dir.path()).unwrap();
 
         let mut state = ScanState {
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -326,7 +328,9 @@ mod tests {
     #[test]
     fn test_version_invalidation() {
         let temp_dir = TempDir::new().unwrap();
-        let manager = StateManager::new(temp_dir.path()).unwrap();
+        // `StateManager::new` would write into the real user cache dir.
+        let manager =
+            StateManager::with_state_dir(temp_dir.path().join("cache"), temp_dir.path()).unwrap();
 
         let state = ScanState {
             version: "0.0.1".to_string(), // Old version

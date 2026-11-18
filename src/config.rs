@@ -246,8 +246,11 @@ mod tests {
         let planted = exe_dir.join(&name);
         fs::write(&planted, "patterns: []\n").unwrap();
 
+        // The user config dir is injected so the lookup cannot probe the
+        // real one.
         let temp = TempDir::new().unwrap();
-        let result = ConfigLoader::find_config(Path::new(&name), temp.path());
+        let user_dir = temp.path().join("xdg").join("oober");
+        let result = ConfigLoader::find_config_in(Path::new(&name), temp.path(), Some(&user_dir));
         fs::remove_file(&planted).unwrap();
 
         let err = result.expect_err("a config next to the binary must not be picked up");
