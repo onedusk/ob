@@ -161,7 +161,16 @@ impl ConfigLoader {
                 e
             ))
         })?;
-        Ok(serde_yaml::from_reader(file)?)
+        let config: ScanConfig = serde_yaml::from_reader(file)?;
+        // An empty regex matches every line of every file.
+        if let Some(empty) = config.patterns.iter().find(|p| p.pattern.is_empty()) {
+            return Err(Error::Config(format!(
+                "pattern '{}' in '{}' is empty; an empty regex matches every line",
+                empty.name,
+                path.display()
+            )));
+        }
+        Ok(config)
     }
 
     /// Loads a `ReplaceConfig` from a YAML file.
@@ -171,7 +180,16 @@ impl ConfigLoader {
     /// * `path` - The path to the YAML configuration file.
     pub fn load_replace_config(path: &Path) -> Result<ReplaceConfig> {
         let file = File::open(path)?;
-        Ok(serde_yaml::from_reader(file)?)
+        let config: ReplaceConfig = serde_yaml::from_reader(file)?;
+        // An empty regex matches at every position of every file.
+        if let Some(index) = config.patterns.iter().position(|p| p.is_empty()) {
+            return Err(Error::Config(format!(
+                "`patterns` entry {} in '{}' is empty; an empty regex matches at every position",
+                index + 1,
+                path.display()
+            )));
+        }
+        Ok(config)
     }
 }
 
@@ -279,6 +297,39 @@ blocks:
             panic!("a scan config with exclusions must load");
         };
         assert_eq!(config.exclusions, ["vendor", "dist"]);
+    }
+
+    #[test]
+    fn test_empty_pattern_strings_are_rejected_by_entry() {
+        // An empty regex matches every line of every file (scan) and at
+        // every position (replace).
+        let temp = TempDir::new().unwrap();
+
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\n  - name: bullet\n    pattern: \"\"\n",
+        );
+        let Err(err) = ConfigLoader::load_scan_config(&path) else {
+            panic!("an empty scan pattern must be rejected");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("'bullet'"), "{msg}");
+        assert!(msg.contains("empty"), "{msg}");
+
+        let path = write_config(
+            temp.path(),
+            "patterns: ['TODO', '']\nreplacements: ['DONE', 'x']\n",
+        );
+        let Err(err) = ConfigLoader::load_replace_config(&path) else {
+            panic!("an empty replace pattern must be rejected");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("entry 2"), "{msg}");
+        assert!(msg.contains("empty"), "{msg}");
+
+        // An empty replacement is still fine: it deletes each match.
+        let path = write_config(temp.path(), "patterns: ['TODO']\nreplacements: ['']\n");
+        assert!(ConfigLoader::load_replace_config(&path).is_ok());
     }
 
     #[test]
