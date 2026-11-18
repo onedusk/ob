@@ -626,6 +626,97 @@ fn incremental_scan_survives_a_cached_file_that_became_unreadable() {
 }
 
 #[test]
+fn scan_overlapping_inputs_report_each_match_once() {
+    // `.` and `sub` reach the same file under two spellings (`./sub/a.txt`
+    // and `sub/a.txt`); every match was printed once per spelling.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir_all(work.join("sub")).unwrap();
+    fs::write(work.join("sub").join("a.txt"), "hello TODO world\n").unwrap();
+
+    let assert = ob()
+        .current_dir(&work)
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg(".")
+        .arg("sub")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "the match must be reported once: {stdout}"
+    );
+    assert!(
+        stdout.contains("./sub/a.txt:1"),
+        "the first spelling of the path must be kept: {stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_reports_a_file_and_a_symlink_to_it_once() {
+    // A symlink and its target are one file. Which of the two spellings is
+    // kept depends on the walk order, so only the count is asserted.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("a.txt"), "hello TODO world\n").unwrap();
+    std::os::unix::fs::symlink("a.txt", work.join("link.txt")).unwrap();
+
+    let assert = ob()
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg(&work)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "the match must be reported once: {stdout}"
+    );
+}
+
+#[test]
+fn incremental_scan_overlapping_inputs_do_not_multiply_cached_matches() {
+    // A file named explicitly and found again in an input directory was
+    // listed twice, so each run read its cached matches twice and saved the
+    // doubled list: the match count doubled on every run.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    let file = work.join("a.txt");
+    fs::write(&file, "hello TODO world\n").unwrap();
+
+    for run in 1..=3 {
+        let assert = ob()
+            .env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("--incremental")
+            .arg(&work)
+            .arg(&file)
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        assert_eq!(
+            stdout.lines().count(),
+            1,
+            "run {run} must report the match once: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     // clap usage errors exit with code 2; an unknown format must not silently

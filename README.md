@@ -281,7 +281,7 @@ Options:
 - `-w, --workers <N>` - Number of threads to use (default: logical CPU cores; env: `OOBER_WORKERS`)
 - `--hidden` - Include hidden files and directories (skipped by default)
 - `--no-ignore` - Do not respect `.gitignore`/`.ignore` files (respected by default)
-- `<INPUTS>...` - Files or directories to scan
+- `<INPUTS>...` - Files or directories to scan; the same file reached twice is scanned once
 
 Note: By default, hidden files and directories (dotfiles such as `.env`, `.github/`) and anything matched by `.gitignore`/`.ignore` files are NOT scanned. For secret scanning, add `--hidden --no-ignore` so the most likely secret locations are not silently skipped.
 

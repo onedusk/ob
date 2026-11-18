@@ -552,10 +552,20 @@ fn collect_files(
     no_ignore: bool,
 ) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
+    // A file reached twice (named explicitly and found in a directory walk,
+    // or via overlapping directories) must be scanned once: listed twice it
+    // reports every match twice, and an incremental run doubles its cached
+    // matches each time. Paths are deduplicated by canonical form so
+    // different spellings of one file collapse; the first spelling is kept.
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Canonical form of each walked directory, resolved once per directory.
+    let mut canonical_dirs: HashMap<PathBuf, PathBuf> = HashMap::new();
 
     for input in inputs {
         if input.is_file() {
-            if should_process_file(input, extensions) {
+            if should_process_file(input, extensions) && seen.insert(canonical(input)) {
                 files.push(input.to_path_buf());
             }
         } else if input.is_dir() {
@@ -571,7 +581,19 @@ fn collect_files(
                 };
                 let path = entry.path();
                 if path.is_file() && should_process_file(path, extensions) {
-                    files.push(path.to_path_buf());
+                    // Resolving every file costs one realpath per file. A
+                    // file that is not a symlink is its canonical directory
+                    // plus its name, so only symlinks are resolved in full.
+                    let key = match (path.parent(), path.file_name()) {
+                        (Some(parent), Some(name)) if !entry.path_is_symlink() => canonical_dirs
+                            .entry(parent.to_path_buf())
+                            .or_insert_with(|| canonical(parent))
+                            .join(name),
+                        _ => canonical(path),
+                    };
+                    if seen.insert(key) {
+                        files.push(path.to_path_buf());
+                    }
                 }
             }
         } else {
