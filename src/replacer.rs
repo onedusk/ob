@@ -1731,6 +1731,119 @@ mod tests {
         assert_eq!(fs::read_to_string(&file).unwrap(), "code\n\nmore\n");
     }
 
+    /// Golden input for the `remove-todos` and `clean-debug` presets, in LF.
+    /// It mixes lines a preset must change with lines it must leave alone;
+    /// the CRLF variant is derived from it so the two cannot drift.
+    const PRESET_GOLDEN_INPUT: &str = r##"function run(items, opts) {
+  // TODO: split this function
+  console.log("start");
+  console.debug(items.length)
+  console.trace();
+  debugger;
+  items.forEach(x => console.log(x));
+  console.log(a); return compute(b);
+  if (opts.debuggerEnabled) { start(); }
+  console.log(
+    "multi-line",
+    items
+  );
+  chargeCustomer(order); // TODO: retry
+  const url = "http://XXX.example.com";
+  const link = '<a href="#TODO">later</a>';
+  // HACK: first of two
+  // XXX second of two
+  return items; // FIXME
+}
+def load(name):
+    # FIXME: cache this
+    logger.debug("loaded %s", name)
+    print(name)  # DEBUG
+    print(name)  # debug
+    timeout = compute_timeout()  # TODO: tune
+    return name
+System.out.println(total); // DEBUG
+Debug.Print(total)
+## TODO
+"##;
+
+    /// Runs `preset` over `content` in a temp file and returns the result.
+    fn apply_preset(preset: &Preset, content: &str) -> String {
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("golden.txt");
+        fs::write(&file, content).unwrap();
+
+        Replacer::new(load_preset(preset))
+            .unwrap()
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        fs::read_to_string(&file).unwrap()
+    }
+
+    /// What `remove-todos` must make of `PRESET_GOLDEN_INPUT`: comment-only
+    /// TODO lines are gone with their line break, trailing TODO comments are
+    /// cut with the whitespace before them, and every other line (code,
+    /// debug calls, markers inside strings, `## TODO`) is byte-identical.
+    const REMOVE_TODOS_GOLDEN_OUTPUT: &str = r##"function run(items, opts) {
+  console.log("start");
+  console.debug(items.length)
+  console.trace();
+  debugger;
+  items.forEach(x => console.log(x));
+  console.log(a); return compute(b);
+  if (opts.debuggerEnabled) { start(); }
+  console.log(
+    "multi-line",
+    items
+  );
+  chargeCustomer(order);
+  const url = "http://XXX.example.com";
+  const link = '<a href="#TODO">later</a>';
+  return items;
+}
+def load(name):
+    logger.debug("loaded %s", name)
+    print(name)  # DEBUG
+    print(name)  # debug
+    timeout = compute_timeout()
+    return name
+System.out.println(total); // DEBUG
+Debug.Print(total)
+## TODO
+"##;
+
+    #[test]
+    fn test_remove_todos_preset_golden_lf() {
+        // Verified failure: every pattern began with `.*`, so the code in
+        // front of a trailing TODO comment was deleted with it
+        // (`chargeCustomer(order); // TODO: retry` became an empty line), and
+        // `"http://XXX.example.com"`, `href="#TODO"` and `## TODO` lines
+        // were emptied too.
+        assert_eq!(
+            apply_preset(&Preset::RemoveTodos, PRESET_GOLDEN_INPUT),
+            REMOVE_TODOS_GOLDEN_OUTPUT
+        );
+    }
+
+    #[test]
+    fn test_remove_todos_preset_golden_crlf() {
+        // Same golden pair with CRLF endings: comment-only lines go with
+        // their \r\n, and every surviving line keeps its \r\n.
+        assert_eq!(
+            apply_preset(
+                &Preset::RemoveTodos,
+                &PRESET_GOLDEN_INPUT.replace('\n', "\r\n")
+            ),
+            REMOVE_TODOS_GOLDEN_OUTPUT.replace('\n', "\r\n")
+        );
+    }
+
     #[test]
     fn test_replace_silently_skips_binary_files() {
         let temp_dir = TempDir::new().unwrap();

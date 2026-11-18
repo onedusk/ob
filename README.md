@@ -304,6 +304,7 @@ The rules come from exactly one of `--preset`, `--config`, or `--pattern` (with 
 Options:
 
 - `--preset <PRESET>` - Built-in pattern set: `remove-copyright`, `clean-debug`, `remove-todos`, `trim-whitespace`, `remove-empty-comments`, `tabs-to-spaces`, `spaces-to-tabs`
+  - `remove-todos` removes `//` and `#` comments that start with `TODO`, `FIXME`, `HACK` or `XXX`. A trailing comment is cut along with the whitespace before it and the code in front stays; a line holding only the comment is removed whole, line break included. The comment marker must start the line or follow whitespace, so `"http://XXX.example.com"`, `href="#TODO"` and `## TODO` are left alone. The match is textual, not parsed: a marker after whitespace inside a string literal (`"skip // TODO items"`) still counts as a comment, so preview with `--dry-run`.
 - `-c, --config <FILE>` - YAML configuration file; the file itself is never processed, even inside an input directory
 - `-p, --pattern <PATTERN>` - Single pattern to match (requires `-r`)
 - `-r, --replacement <TEXT>` - Replacement text (requires `-p`); to delete the line after each match, use a config file with a `null` replacement

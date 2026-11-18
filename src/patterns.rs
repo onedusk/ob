@@ -93,25 +93,20 @@ pub fn load_preset(preset: &Preset) -> ReplaceConfig {
 
         Preset::RemoveTodos => ReplaceConfig {
             patterns: vec![
-                ".*//\\s*TODO:?.*".to_string(),
-                ".*//\\s*FIXME:?.*".to_string(),
-                ".*//\\s*HACK:?.*".to_string(),
-                ".*//\\s*XXX:?.*".to_string(),
-                ".*#\\s*TODO:?.*".to_string(),
-                ".*#\\s*FIXME:?.*".to_string(),
-                ".*#\\s*HACK:?.*".to_string(),
-                ".*#\\s*XXX:?.*".to_string(),
+                // Only the comment goes, never code. (?mR) as in the presets
+                // below: ^/$ match at every LF or CRLF line boundary and .
+                // stops before \r. [ \t] instead of \s keeps a match on one
+                // line. Order matters: comment-only lines must go first.
+                //
+                // A line holding only the comment is removed whole, with its
+                // line break.
+                "(?mR)^[ \\t]*(?://|#)[ \\t]*(?:TODO|FIXME|HACK|XXX).*(?:\\r?\\n)?".to_string(),
+                // A trailing comment is cut with the whitespace before it.
+                // Requiring that whitespace leaves "http://XXX.example.com",
+                // href="#TODO" and "## TODO" alone.
+                "(?mR)[ \\t]+(?://|#)[ \\t]*(?:TODO|FIXME|HACK|XXX).*$".to_string(),
             ],
-            replacements: vec![
-                Some("".to_string()),
-                Some("".to_string()),
-                Some("".to_string()),
-                Some("".to_string()),
-                Some("".to_string()),
-                Some("".to_string()),
-                Some("".to_string()),
-                Some("".to_string()),
-            ],
+            replacements: vec![Some("".to_string()), Some("".to_string())],
             blocks: vec![],
             extensions: None,
             exclude: None,

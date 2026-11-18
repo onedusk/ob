@@ -45,7 +45,7 @@ pub enum Preset {
     RemoveCopyright,
     /// Clean up debug code (e.g., `console.log`, `print` statements).
     CleanDebug,
-    /// Remove `TODO` and `FIXME` comments.
+    /// Remove `TODO`, `FIXME`, `HACK` and `XXX` comments (`//` and `#` style), keeping the code before them.
     RemoveTodos,
     /// Clean up trailing whitespace from lines.
     TrimWhitespace,
