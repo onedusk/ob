@@ -1032,6 +1032,29 @@ fn replace_without_inputs_or_list_presets_is_a_helpful_error() {
 }
 
 #[test]
+fn replace_preset_with_pattern_is_a_usage_error_and_touches_nothing() {
+    // --preset used to win silently, dropping the -p/-r the user asked for.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.txt");
+    fs::write(&file, "alpha   \n").unwrap();
+
+    // clap usage errors exit with code 2.
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("--preset")
+        .arg("trim-whitespace")
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .code(2);
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha   \n");
+    assert!(!temp.path().join("a.txt.bak").exists());
+}
+
+#[test]
 fn unknown_preset_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("t.txt");

@@ -174,7 +174,8 @@ pub enum Commands {
     /// remove-empty-comments, tabs-to-spaces, spaces-to-tabs
     Replace {
         /// The name of a built-in preset to use for replacement.
-        #[arg(long, value_enum)]
+        /// Cannot be combined with -c/--config or -p/--pattern.
+        #[arg(long, value_enum, conflicts_with_all = ["config", "pattern"])]
         preset: Option<Preset>,
 
         /// List the available presets with their descriptions, then exit.
@@ -182,10 +183,12 @@ pub enum Commands {
         list_presets: bool,
 
         /// Path to a YAML configuration file for replacement rules.
-        #[arg(short, long)]
+        /// Cannot be combined with --preset or -p/--pattern.
+        #[arg(short, long, conflicts_with = "pattern")]
         config: Option<PathBuf>,
 
         /// A single regex pattern to search for. Requires -r/--replacement.
+        /// Cannot be combined with --preset or -c/--config.
         #[arg(short, long, requires = "replacement")]
         pattern: Option<String>,
 
@@ -444,6 +447,40 @@ mod tests {
             assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument, "{argv:?}");
         }
         assert!(Args::try_parse_from(["ob", "replace", ".", "-p", "TODO", "-r", "DONE"]).is_ok());
+    }
+
+    #[test]
+    fn test_replace_rule_sources_are_mutually_exclusive() {
+        use clap::error::ErrorKind;
+
+        // These used to be silently prioritized: preset over config over
+        // pattern.
+        for argv in [
+            &[
+                "ob",
+                "replace",
+                ".",
+                "--preset",
+                "clean-debug",
+                "-c",
+                "c.yaml",
+            ][..],
+            &[
+                "ob",
+                "replace",
+                ".",
+                "--preset",
+                "clean-debug",
+                "-p",
+                "A",
+                "-r",
+                "B",
+            ],
+            &["ob", "replace", ".", "-c", "c.yaml", "-p", "A", "-r", "B"],
+        ] {
+            let err = Args::try_parse_from(argv).expect_err("must be a usage error");
+            assert_eq!(err.kind(), ErrorKind::ArgumentConflict, "{argv:?}");
+        }
     }
 
     #[test]

@@ -296,6 +296,8 @@ The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/o
 
 Replace or remove patterns in files.
 
+The rules come from exactly one of `--preset`, `--config`, or `--pattern` (with `--replacement`); combining them is a usage error.
+
 Options:
 
 - `--preset <PRESET>` - Built-in pattern set: `remove-copyright`, `clean-debug`, `remove-todos`, `trim-whitespace`, `remove-empty-comments`, `tabs-to-spaces`, `spaces-to-tabs`
