@@ -93,11 +93,11 @@ struct BackupCandidates {
 fn find_backups(dir: &Path) -> BackupCandidates {
     // Recorded backups under `dir`, by the path their record is keyed by.
     // The walk below takes out the ones it reaches, so none is listed twice.
-    let mut records: HashMap<PathBuf, PathBuf> = fs::canonicalize(dir)
+    let mut records: HashMap<PathBuf, BackupRecord> = fs::canonicalize(dir)
         .map(|canonical| backup_records::list_under(&canonical))
         .unwrap_or_default()
         .into_iter()
-        .map(|record| (record.backup, record.original))
+        .map(|record| (record.backup.clone(), record))
         .collect();
     let mut backups = BackupCandidates::default();
 
@@ -126,10 +126,17 @@ fn find_backups(dir: &Path) -> BackupCandidates {
         };
         let path = entry.path();
         if path.is_file() && is_backup_file(path) {
+            // A record makes a `.bak` oober's only while the file is still
+            // the one the record describes: once the backup is deleted by
+            // hand, a file the user creates at its path is theirs. A file
+            // that cannot be looked at stays recorded, and acting on it
+            // reports the error.
             let recorded = backup_records::canonical_path(path)
                 .ok()
                 .and_then(|key| records.remove(&key))
-                .is_some();
+                .is_some_and(|record| {
+                    fs::symlink_metadata(path).map_or(true, |m| record.describes(&m))
+                });
             if recorded {
                 backups
                     .recorded
@@ -144,11 +151,16 @@ fn find_backups(dir: &Path) -> BackupCandidates {
     // and paths where something other than a file sits now. Only a backup
     // that is known to be gone is stale; one that cannot be looked at (e.g.
     // inside an unreadable directory) stays recorded, and acting on it
-    // reports the error.
-    for (backup, original) in records {
+    // reports the error. Whatever else sits at the path is not the backup
+    // oober made, and the walk did not offer it to --all-bak either.
+    for (backup, record) in records {
         match fs::symlink_metadata(&backup) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => backups.stale.push(backup),
-            _ => backups.recorded.push((backup, original)),
+            Ok(metadata) if !record.describes(&metadata) => eprintln!(
+                "Warning: leaving {} alone: it is not the backup oober recorded there",
+                backup.display()
+            ),
+            _ => backups.recorded.push((backup, record.original)),
         }
     }
 
@@ -159,8 +171,9 @@ fn find_backups(dir: &Path) -> BackupCandidates {
 /// it. Returns the `.bak` path, plus the record of the backup already there
 /// when that backup is kept; `None` means a new backup must be created.
 ///
-/// An existing backup is kept only when it is oober's own (recorded, a
-/// regular file) and the file's size and mtime still equal the record's:
+/// An existing backup is kept only when it is oober's own (recorded, and
+/// still the regular file its record describes) and the file's size and
+/// mtime still equal the record's:
 /// nothing touched the file since oober last wrote it, so the oldest backup
 /// still leads back to the pre-oober original. Anything else at the path is
 /// an error. Modifying the file anyway would leave its current state with no
@@ -173,12 +186,12 @@ fn check_backup(path: &Path) -> Result<(PathBuf, Option<BackupRecord>)> {
     let Ok(backup_metadata) = fs::symlink_metadata(&backup_path) else {
         return Ok((backup_path, None));
     };
-    if backup_metadata.is_file() {
-        if let Some(record) = backup_records::load(&backup_path) {
-            let metadata = fs::metadata(path)?;
-            if metadata.len() == record.size && metadata.modified()? == record.mtime {
-                return Ok((backup_path, Some(record)));
-            }
+    let record =
+        backup_records::load(&backup_path).filter(|record| record.describes(&backup_metadata));
+    if let Some(record) = record {
+        let metadata = fs::metadata(path)?;
+        if metadata.len() == record.size && metadata.modified()? == record.mtime {
+            return Ok((backup_path, Some(record)));
         }
     }
     Err(Error::BackupExists(backup_path))
@@ -505,8 +518,13 @@ impl Replacer {
             let result = restore_backup(&backup, &original).and_then(|()| {
                 if options.keep_backups {
                     // The record describes the file as oober last wrote it,
-                    // and that is now the restore.
-                    if let Some(record) = backup_records::load(&backup) {
+                    // and that is now the restore. A record that does not
+                    // describe this backup (an unrecorded `.bak` restored
+                    // with `all_bak`) is left as it is.
+                    let metadata = fs::symlink_metadata(&backup)?;
+                    let record =
+                        backup_records::load(&backup).filter(|record| record.describes(&metadata));
+                    if let Some(record) = record {
                         backup_records::write(&backup, &original, record.created)?;
                     }
                 } else {
@@ -2608,6 +2626,153 @@ Debug.Print(total)
         let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
         assert_eq!((stats.found, stats.failed), (0, 0));
         assert!(backup_records::list_under(&canonical_dir).is_empty());
+    }
+
+    /// Runs `alpha` -> `beta` over `file` with a backup, then swaps the
+    /// backup oober made for a file of the user's own. Returns the backup
+    /// path. The user's file differs in size, so no test here depends on the
+    /// clock's resolution.
+    fn replace_then_swap_backup(file: &Path) -> PathBuf {
+        fs::write(file, "alpha\n").unwrap();
+        single_pattern_replacer("alpha", "beta")
+            .process_file(
+                file,
+                ProcessOptions {
+                    create_backup: true,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+        let mut backup = file.as_os_str().to_owned();
+        backup.push(".bak");
+        let backup = PathBuf::from(backup);
+        fs::remove_file(&backup).unwrap();
+        fs::write(&backup, "my own copy\n").unwrap();
+        backup
+    }
+
+    #[test]
+    fn test_a_file_put_at_a_recorded_backup_path_is_not_oobers_backup() {
+        // Verified failure: a record named only the backup's path. After the
+        // backup was deleted by hand, any file created at that path counted
+        // as oober's: undo restored it over the live file and deleted it,
+        // and clean-backups deleted it.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("t.txt");
+        let backup = replace_then_swap_backup(&file);
+        fs::write(&file, "edited by hand\n").unwrap();
+
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.restored, stats.unrecorded), (0, 0, 1));
+        run_clean_backups(dir.to_path_buf(), false, false).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "edited by hand\n");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "my own copy\n");
+
+        // --all-bak still restores it, and --keep-backups must not turn the
+        // user's file into a recorded backup on the way.
+        let stats = Replacer::undo(
+            dir,
+            UndoOptions {
+                keep_backups: true,
+                ..ALL_BAK
+            },
+        )
+        .unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "my own copy\n");
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.unrecorded), (0, 1));
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "my own copy\n");
+    }
+
+    #[test]
+    fn test_replace_refuses_a_file_whose_recorded_backup_was_swapped() {
+        // Verified failure: the live file still matched the record, so the
+        // second run kept the user's file as "the oldest backup", changed
+        // the live file, and undo then restored the user's file over it.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("t.txt");
+        let backup = replace_then_swap_backup(&file);
+
+        let result = single_pattern_replacer("beta", "gamma").process_file(
+            &file,
+            ProcessOptions {
+                create_backup: true,
+                dry_run: false,
+            },
+        );
+        assert!(matches!(result, Err(Error::BackupExists(_))));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta\n");
+
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.restored), (0, 0));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta\n");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "my own copy\n");
+    }
+
+    #[test]
+    fn test_a_recorded_backup_with_another_mtime_is_not_oobers_backup() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("t.txt");
+        let backup = replace_then_swap_backup(&file);
+
+        // The same size as the backup oober made ("alpha\n"), one minute
+        // newer: only the modification time tells the two apart.
+        let recorded = backup_records::load(&backup).unwrap();
+        fs::write(&backup, "ALPHA\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&backup)
+            .unwrap()
+            .set_modified(recorded.created + std::time::Duration::from_secs(60))
+            .unwrap();
+
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.unrecorded), (0, 1));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta\n");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "ALPHA\n");
+    }
+
+    #[test]
+    fn test_a_swapped_backup_the_walk_does_not_reach_is_left_alone() {
+        // The backup of a hidden input is found through its record, not by
+        // the walk, so it needs the same check there.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join(".env");
+        let backup = replace_then_swap_backup(&file);
+
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.restored, stats.failed), (0, 0, 0));
+        run_clean_backups(dir.to_path_buf(), false, false).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta\n");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "my own copy\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_clean_backups_leaves_a_symlink_put_at_a_recorded_backup_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("t.txt");
+        let backup = replace_then_swap_backup(&file);
+        fs::remove_file(&backup).unwrap();
+        std::os::unix::fs::symlink(dir.join("nowhere"), &backup).unwrap();
+
+        run_clean_backups(dir.to_path_buf(), false, false).unwrap();
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.failed), (0, 0));
+        assert!(
+            fs::symlink_metadata(&backup)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the user's symlink must be left in place"
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "beta\n");
     }
 
     #[cfg(unix)]

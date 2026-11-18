@@ -4,6 +4,10 @@
 //! on a backup by default only when a record says oober made it. Each backup
 //! has one small JSON file under `<cache dir>/oober/backups/`, named by the
 //! SHA-256 of the backup's path: parallel workers never share a file.
+//!
+//! A record also holds the backup's own size and modification time. The path
+//! alone proves nothing: once a backup is deleted by hand its record stays
+//! behind, and a file the user later creates at that path is theirs.
 
 use crate::errors::Result;
 use serde::{Deserialize, Serialize};
@@ -25,8 +29,27 @@ pub(crate) struct BackupRecord {
     pub size: u64,
     /// The modification time of the original after that write.
     pub mtime: SystemTime,
+    /// The size of the backup file itself. `None` in a record written before
+    /// this field existed; such a record describes no file.
+    #[serde(default)]
+    pub backup_size: Option<u64>,
+    /// The modification time of the backup file itself.
+    #[serde(default)]
+    pub backup_mtime: Option<SystemTime>,
     /// When the backup was created.
     pub created: SystemTime,
+}
+
+impl BackupRecord {
+    /// Whether `metadata`, read from the backup's path without following a
+    /// symlink, shows the backup this record was written for: a regular file
+    /// with the recorded size and modification time.
+    pub(crate) fn describes(&self, metadata: &fs::Metadata) -> bool {
+        metadata.is_file()
+            && self.backup_size == Some(metadata.len())
+            && self.backup_mtime.is_some()
+            && metadata.modified().ok() == self.backup_mtime
+    }
 }
 
 /// The directory that holds the records.
@@ -79,17 +102,22 @@ fn record_file(canonical_backup: &Path) -> PathBuf {
 }
 
 /// Records that `backup` holds the pre-oober content of `original`, along
-/// with the size and modification time `original` has right now.
+/// with the size and modification time each of the two has right now.
 ///
-/// Call it after oober has written `original`. `created` is the current time
-/// for a new backup and the stored value when a record is refreshed.
+/// Call it after oober has written `original`, and only for a backup oober
+/// just created or one its record still [describes](BackupRecord::describes).
+/// `created` is the current time for a new backup and the stored value when
+/// a record is refreshed.
 pub(crate) fn write(backup: &Path, original: &Path, created: SystemTime) -> Result<()> {
     let metadata = fs::metadata(original)?;
+    let backup_metadata = fs::symlink_metadata(backup)?;
     let record = BackupRecord {
         backup: canonical_path(backup)?,
         original: canonical_path(original)?,
         size: metadata.len(),
         mtime: metadata.modified()?,
+        backup_size: Some(backup_metadata.len()),
+        backup_mtime: Some(backup_metadata.modified()?),
         created,
     };
 
@@ -184,6 +212,7 @@ mod tests {
             fs::metadata(&original).unwrap().modified().unwrap()
         );
         assert_eq!(record.created, created);
+        assert!(record.describes(&fs::symlink_metadata(&backup).unwrap()));
 
         // Listing is scoped to the directory asked for.
         let listed = list_under(&canonical_dir);
@@ -195,6 +224,40 @@ mod tests {
         assert!(load(&backup).is_none());
         assert!(list_under(&canonical_dir).is_empty());
         // Removing a record that is already gone is fine.
+        remove(&backup);
+    }
+
+    #[test]
+    fn test_record_describes_only_the_backup_it_was_written_for() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let original = dir.join("a.txt");
+        let backup = dir.join("a.txt.bak");
+        fs::write(&original, "after").unwrap();
+        fs::write(&backup, "before").unwrap();
+        write(&backup, &original, SystemTime::now()).unwrap();
+        let record = load(&backup).unwrap();
+
+        // Another file at the same path: here the size gives it away.
+        fs::write(&backup, "someone else's file").unwrap();
+        assert!(!record.describes(&fs::symlink_metadata(&backup).unwrap()));
+        // A directory is never a backup.
+        assert!(!record.describes(&fs::symlink_metadata(dir).unwrap()));
+
+        // A record written before the backup's size and mtime were stored
+        // still loads, and describes no file.
+        fs::write(&backup, "before").unwrap();
+        write(&backup, &original, SystemTime::now()).unwrap();
+        let file = record_file(&canonical_path(&backup).unwrap());
+        let mut json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        let fields = json.as_object_mut().unwrap();
+        assert!(fields.remove("backup_size").is_some());
+        assert!(fields.remove("backup_mtime").is_some());
+        fs::write(&file, json.to_string()).unwrap();
+        let old = load(&backup).expect("an older record must still parse");
+        assert_eq!(old.backup_size, None);
+        assert!(!old.describes(&fs::symlink_metadata(&backup).unwrap()));
         remove(&backup);
     }
 

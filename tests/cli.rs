@@ -1106,6 +1106,43 @@ fn undo_and_clean_backups_leave_bak_files_oober_did_not_create() {
 }
 
 #[test]
+fn undo_and_clean_backups_leave_a_file_put_at_a_recorded_backup_path() {
+    // Verified failure: a backup record named only the backup's path. With
+    // oober's a.txt.bak deleted by hand, the user's own file at that path
+    // was restored over the live a.txt and deleted by undo, and deleted by
+    // clean-backups.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    let backup = dir.join("a.txt.bak");
+    fs::write(&file, "alpha one\n").unwrap();
+    replace_alpha_with_beta(dir);
+
+    fs::remove_file(&backup).unwrap();
+    fs::write(&backup, "USER OWN BAK\n").unwrap();
+    fs::write(&file, "live edited\n").unwrap();
+
+    for command in ["undo", "clean-backups"] {
+        ob().arg(command)
+            .arg("-d")
+            .arg(dir)
+            .assert()
+            .success()
+            .stdout(contains("--all-bak"));
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "live edited\n",
+            "after {command}"
+        );
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            "USER OWN BAK\n",
+            "after {command}"
+        );
+    }
+}
+
+#[test]
 fn undo_restores_the_backup_of_a_hidden_file_named_as_input() {
     // The backup walk skips hidden paths; the backup record still finds it.
     let temp = TempDir::new().unwrap();
