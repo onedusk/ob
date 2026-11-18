@@ -477,6 +477,108 @@ fn no_cache_content_without_incremental_is_rejected() {
         .stderr(contains("--incremental"));
 }
 
+/// Makes `path` unreadable (mode 000). Returns false, with the mode put
+/// back, when the file can still be opened: the tests run as root, where
+/// the mode does not block reads.
+#[cfg(unix)]
+fn make_unreadable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::File::open(path).is_ok() {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
+        return false;
+    }
+    true
+}
+
+#[cfg(unix)]
+#[test]
+fn incremental_scan_does_not_cache_a_file_it_could_not_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // A file that failed to scan was saved in the cache as scanned with no
+    // matches. Making it readable changes neither its size nor its
+    // modification time, so every later run skipped it: a false all-clear.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("ok.txt"), "hello TODO world\n").unwrap();
+    let locked = work.join("locked.txt");
+    fs::write(&locked, "TODO locked\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    let scan = || {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("--incremental")
+            .arg(&work);
+        cmd
+    };
+
+    let first = scan().assert();
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    first
+        .success()
+        .stdout(contains("ok.txt"))
+        .stderr(contains("locked.txt"));
+
+    // The file is readable now and was never scanned: it must be scanned.
+    scan().assert().success().stdout(contains("TODO locked"));
+}
+
+#[cfg(unix)]
+#[test]
+fn incremental_content_hash_scan_survives_an_unreadable_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // With --content-hash, saving the cache hashed every file again, so one
+    // unreadable file failed the whole run after the results were written.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("ok.txt"), "hello TODO world\n").unwrap();
+    let locked = work.join("locked.txt");
+    fs::write(&locked, "TODO locked\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    let assert = ob()
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("--incremental")
+        .arg("--content-hash")
+        .arg(&work)
+        .assert();
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    assert
+        .success()
+        .stdout(contains("ok.txt"))
+        .stderr(contains("locked.txt"));
+
+    let cached = read_cache_file(&cache);
+    assert!(
+        cached.contains("ok.txt"),
+        "the cache must still be saved for the readable file: {cached}"
+    );
+    assert!(
+        !cached.contains("locked.txt"),
+        "the unreadable file must stay out of the cache: {cached}"
+    );
+}
+
 #[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();

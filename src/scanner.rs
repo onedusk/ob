@@ -228,13 +228,21 @@ impl Scanner {
             .map(|entry| entry.path().to_path_buf())
             .collect();
 
-        self.scan_files_parallel(&files, workers)
+        Ok(self.scan_files_parallel(&files, workers)?.0)
     }
 
     /// Scans a list of files in parallel using a local Rayon thread pool.
-    fn scan_files_parallel(&self, files: &[PathBuf], workers: Option<usize>) -> Result<Vec<Match>> {
+    ///
+    /// Returns the matches together with the paths that could not be scanned,
+    /// so callers can tell a file without matches from a file that was never
+    /// read.
+    fn scan_files_parallel(
+        &self,
+        files: &[PathBuf],
+        workers: Option<usize>,
+    ) -> Result<(Vec<Match>, Vec<PathBuf>)> {
         if files.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let pool = rayon::ThreadPoolBuilder::new()
@@ -244,23 +252,31 @@ impl Scanner {
         Ok(pool.install(|| {
             files
                 .par_iter()
-                .fold(Vec::new, |mut acc, path| {
-                    // A single unreadable file must not kill the whole scan.
-                    match self.scan_file(path) {
-                        Ok(matches) => acc.extend(matches),
-                        Err(e) => {
-                            eprintln!(
-                                "Warning: skipping unreadable file '{}': {e}",
-                                path.display()
-                            )
+                .fold(
+                    || (Vec::new(), Vec::new()),
+                    |mut acc, path| {
+                        // A single unreadable file must not kill the whole scan.
+                        match self.scan_file(path) {
+                            Ok(matches) => acc.0.extend(matches),
+                            Err(e) => {
+                                eprintln!(
+                                    "Warning: skipping unreadable file '{}': {e}",
+                                    path.display()
+                                );
+                                acc.1.push(path.clone());
+                            }
                         }
-                    }
-                    acc
-                })
-                .reduce(Vec::new, |mut left, mut right| {
-                    left.append(&mut right);
-                    left
-                })
+                        acc
+                    },
+                )
+                .reduce(
+                    || (Vec::new(), Vec::new()),
+                    |mut left, mut right| {
+                        left.0.append(&mut right.0);
+                        left.1.append(&mut right.1);
+                        left
+                    },
+                )
         }))
     }
 }
@@ -473,7 +489,7 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
         all_matches.extend(cached_matches);
     }
 
-    let scanned_matches = scanner.scan_files_parallel(&files_to_scan, workers)?;
+    let (scanned_matches, failed_files) = scanner.scan_files_parallel(&files_to_scan, workers)?;
     all_matches.extend(scanned_matches);
 
     let formatter = OutputFormatter::new(format, include_summary);
@@ -486,10 +502,11 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
             &files,
             known_fingerprints,
             &all_matches,
+            &failed_files,
             &fp,
             patterns_hash,
             no_cache_content,
-        )?;
+        );
         manager.save_state(&scan_state)?;
     }
 
@@ -579,23 +596,44 @@ fn compute_patterns_hash(patterns: &[Pattern]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Builds the state to cache for this run.
+///
+/// A file in `failed` could not be scanned and is left out, even when a
+/// fingerprint was carried over for it: saved, it would count as scanned
+/// with no matches and be skipped until its size or modification time
+/// changed. A file that cannot be fingerprinted is left out with a warning
+/// instead of failing the run. Either way the next run scans the file again.
 fn build_scan_state(
     files: &[PathBuf],
     mut known_fingerprints: HashMap<PathBuf, FileFingerprint>,
     matches: &[Match],
+    failed: &[PathBuf],
     fingerprinter: &Fingerprinter,
     patterns_hash: String,
     no_cache_content: bool,
-) -> Result<ScanState> {
+) -> ScanState {
     let now = SystemTime::now();
+    let failed: HashSet<&PathBuf> = failed.iter().collect();
     let mut file_states = HashMap::new();
 
     for file in files {
+        if failed.contains(file) {
+            continue;
+        }
         // Reuse the fingerprint carried over from change detection; only files
         // without one (new files, or size-mismatch short circuits) are read here.
         let fingerprint = match known_fingerprints.remove(file) {
             Some(fingerprint) => fingerprint,
-            None => fingerprinter.fingerprint_file(file)?,
+            None => match fingerprinter.fingerprint_file(file) {
+                Ok(fingerprint) => fingerprint,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: not caching '{}': could not fingerprint it: {e}",
+                        file.display()
+                    );
+                    continue;
+                }
+            },
         };
         file_states.insert(
             file.to_path_buf(),
@@ -609,13 +647,13 @@ fn build_scan_state(
         );
     }
 
-    Ok(ScanState {
+    ScanState {
         version: env!("CARGO_PKG_VERSION").to_string(),
         last_scan: now,
         files: file_states,
         patterns_hash,
         scan_results: build_scan_results(matches, no_cache_content),
-    })
+    }
 }
 
 fn build_scan_results(
@@ -1104,13 +1142,14 @@ mod tests {
         let mut carried = HashMap::new();
         carried.insert(file.clone(), fingerprint);
 
-        // Make the file unreadable: fingerprinting it would fail, so a passing
-        // build_scan_state proves the carried fingerprint was reused instead of
-        // the file being read a second time.
+        // Make the file unreadable: fingerprinting it would fail and leave it
+        // out of the state, so finding it there proves the carried fingerprint
+        // was reused instead of the file being read a second time.
         fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
         let state = build_scan_state(
             std::slice::from_ref(&file),
             carried,
+            &[],
             &[],
             &fingerprinter,
             "patterns".to_string(),
@@ -1118,7 +1157,6 @@ mod tests {
         );
         fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
 
-        let state = state.unwrap();
         assert_eq!(state.files[&file].hash, expected_hash);
 
         // A file without a carried fingerprint is still fingerprinted normally.
@@ -1128,14 +1166,54 @@ mod tests {
             std::slice::from_ref(&fresh),
             HashMap::new(),
             &[],
+            &[],
             &fingerprinter,
             "patterns".to_string(),
             false,
-        )
-        .unwrap();
+        );
         assert_eq!(
             state.files[&fresh].hash,
             fingerprinter.fingerprint_file(&fresh).unwrap().hash
+        );
+    }
+
+    #[test]
+    fn test_build_scan_state_leaves_out_failed_and_unfingerprintable_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let ok = temp_dir.path().join("ok.txt");
+        fs::write(&ok, "scanned").unwrap();
+        // Reported as failed by the scan, with a fingerprint carried over
+        // from change detection: the failure must win.
+        let failed = temp_dir.path().join("failed.txt");
+        fs::write(&failed, "never read").unwrap();
+        // Gone by the time the state is built: fingerprinting it fails.
+        let missing = temp_dir.path().join("missing.txt");
+
+        let fingerprinter = Fingerprinter::new(false);
+        let mut carried = HashMap::new();
+        carried.insert(
+            failed.clone(),
+            fingerprinter.fingerprint_file(&failed).unwrap(),
+        );
+
+        let state = build_scan_state(
+            &[ok.clone(), failed.clone(), missing.clone()],
+            carried,
+            &[],
+            std::slice::from_ref(&failed),
+            &fingerprinter,
+            "patterns".to_string(),
+            false,
+        );
+
+        assert!(state.files.contains_key(&ok));
+        assert!(
+            !state.files.contains_key(&failed),
+            "a file that failed to scan must not be cached as scanned"
+        );
+        assert!(
+            !state.files.contains_key(&missing),
+            "a file that cannot be fingerprinted must be left out, not abort"
         );
     }
 
