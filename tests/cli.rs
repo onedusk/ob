@@ -9,10 +9,29 @@ use assert_cmd::Command;
 use predicates::str::contains;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 use tempfile::TempDir;
 
+/// A per-process directory standing in for the user's cache and config
+/// dirs. It lives under the cargo target dir and is never dropped, so it
+/// stays valid for every test in this process.
+fn isolated_xdg_home() -> &'static Path {
+    static XDG_HOME: OnceLock<TempDir> = OnceLock::new();
+    XDG_HOME
+        .get_or_init(|| {
+            TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("temp dir must be creatable")
+        })
+        .path()
+}
+
+/// The `oober` binary with `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` pointed at
+/// a temp dir, so no test can read or write the real user cache or config
+/// dir. A test that sets its own values afterwards keeps them.
 fn ob() -> Command {
-    Command::cargo_bin("oober").expect("oober binary must build")
+    let mut cmd = Command::cargo_bin("oober").expect("oober binary must build");
+    cmd.env("XDG_CACHE_HOME", isolated_xdg_home().join("cache"))
+        .env("XDG_CONFIG_HOME", isolated_xdg_home().join("config"));
+    cmd
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +292,38 @@ fn incremental_scan_with_empty_xdg_cache_home_does_not_cache_in_project() {
     assert!(
         !work.join("oober").exists(),
         "an empty XDG_CACHE_HOME must not put the scan cache inside the scanned project"
+    );
+}
+
+#[test]
+fn ob_helper_keeps_the_scan_cache_out_of_the_user_cache_dir() {
+    // Without the helper's XDG defaults an incremental scan writes into the
+    // platform cache dir under HOME, i.e. the real user cache on a dev
+    // machine.
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("src.txt"), "hello TODO world\n").unwrap();
+
+    ob().env("HOME", &home)
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("--incremental")
+        .arg(&work)
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_dir(&home).unwrap().count(),
+        0,
+        "the scan cache must not land under HOME"
+    );
+    assert!(
+        isolated_xdg_home().join("cache").join("oober").is_dir(),
+        "the scan cache must land in the helper's temp dir"
     );
 }
 
