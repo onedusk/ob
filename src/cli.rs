@@ -27,7 +27,7 @@ Designed for large codebases with:
 QUICK EXAMPLES:
   ob scan .                           # Scan current dir using ./patterns.yaml
   ob scan -e 'TODO|FIXME' .           # Scan with an inline regex (no YAML file)
-  ob replace . --preset clean-debug   # Remove all debug code
+  ob replace . --preset clean-debug   # Remove debug code
   ob rename -d . -p 'test_(.*)' -r 'spec_$1'  # Rename test files
   ob undo -d .                        # Restore from backups
 
@@ -43,7 +43,7 @@ pub struct Args {
 pub enum Preset {
     /// Remove copyright headers and license blocks.
     RemoveCopyright,
-    /// Clean up debug code (e.g., `console.log`, `print` statements).
+    /// Comment out whole-line debug statements (`console.log`, `debugger`, `print(...)  # DEBUG`) and remove DEBUG START/END blocks.
     CleanDebug,
     /// Remove `TODO`, `FIXME`, `HACK` and `XXX` comments (`//` and `#` style), keeping the code before them.
     RemoveTodos,
@@ -154,7 +154,7 @@ pub enum Commands {
     /// Replace patterns in files (with automatic backups)
     ///
     /// EXAMPLES:
-    ///   ob replace . --preset clean-debug          # Remove all debug code
+    ///   ob replace . --preset clean-debug          # Remove debug code
     ///   ob replace . -p 'TODO' -r 'TODO'           # Simple replacement
     ///   ob replace src/ lib/ -c config.yaml --dry-run  # Preview changes
     ///   ob replace main.py --preset remove-todos   # Process a single file

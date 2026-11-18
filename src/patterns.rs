@@ -52,26 +52,32 @@ pub fn load_preset(preset: &Preset) -> ReplaceConfig {
 
         Preset::CleanDebug => ReplaceConfig {
             patterns: vec![
-                "console\\.log\\(.*\\)".to_string(),
-                "console\\.debug\\(.*\\)".to_string(),
-                "console\\.trace\\(.*\\)".to_string(),
-                "debugger;?".to_string(),
-                "print\\(.*\\)\\s*#\\s*DEBUG".to_string(),
-                "print\\(.*\\)\\s*#\\s*debug".to_string(),
-                "logger\\.debug\\(.*\\)".to_string(),
-                "Debug\\.Print\\(.*\\)".to_string(),
-                "System\\.out\\.println\\(.*\\);?\\s*//\\s*DEBUG".to_string(),
+                // Only a debug call that is the whole statement on its own
+                // line is touched: the call must start the line (after the
+                // indent, kept as ${1}), its arguments hold no `;` and stay
+                // on the line, and nothing but an optional `;` and
+                // whitespace may follow (kept as ${2}). (?mR) as in the
+                // presets below: ^/$ match at every LF or CRLF line
+                // boundary. [ \t] and [^;\r\n] keep a match on one line.
+                "(?mR)^([ \\t]*)console\\.log\\([^;\\r\\n]*\\)([ \\t]*;?[ \\t]*)$".to_string(),
+                "(?mR)^([ \\t]*)console\\.debug\\([^;\\r\\n]*\\)([ \\t]*;?[ \\t]*)$".to_string(),
+                "(?mR)^([ \\t]*)console\\.trace\\([^;\\r\\n]*\\)([ \\t]*;?[ \\t]*)$".to_string(),
+                "(?mR)^([ \\t]*)debugger;?([ \\t]*)$".to_string(),
+                // The DEBUG marker is a comment, so whatever follows it on
+                // the line is comment text and stays.
+                "(?mR)^([ \\t]*)print\\([^;\\r\\n]*\\)[ \\t]*#[ \\t]*DEBUG".to_string(),
+                "(?mR)^([ \\t]*)print\\([^;\\r\\n]*\\)[ \\t]*#[ \\t]*debug".to_string(),
+                "(?mR)^([ \\t]*)System\\.out\\.println\\([^;\\r\\n]*\\);?[ \\t]*//[ \\t]*DEBUG"
+                    .to_string(),
             ],
             replacements: vec![
-                Some("// console.log()".to_string()),
-                Some("// console.debug()".to_string()),
-                Some("// console.trace()".to_string()),
-                Some("// debugger;".to_string()),
-                Some("# print() # DEBUG".to_string()),
-                Some("# print() # debug".to_string()),
-                Some("// logger.debug()".to_string()),
-                Some("// Debug.Print()".to_string()),
-                Some("// System.out.println(); // DEBUG".to_string()),
+                Some("${1}// console.log()${2}".to_string()),
+                Some("${1}// console.debug()${2}".to_string()),
+                Some("${1}// console.trace()${2}".to_string()),
+                Some("${1}// debugger;${2}".to_string()),
+                Some("${1}# print() # DEBUG".to_string()),
+                Some("${1}# print() # debug".to_string()),
+                Some("${1}// System.out.println(); // DEBUG".to_string()),
             ],
             blocks: vec![
                 Block {

@@ -1844,6 +1844,70 @@ Debug.Print(total)
         );
     }
 
+    /// What `clean-debug` must make of `PRESET_GOLDEN_INPUT`: a debug call
+    /// that is the whole statement on its line becomes a comment stub at the
+    /// same indent, and every other line (a call sharing its line with other
+    /// code, a multi-line call, `debuggerEnabled`, `logger.debug`,
+    /// `Debug.Print`, the TODO comments) is byte-identical.
+    const CLEAN_DEBUG_GOLDEN_OUTPUT: &str = r##"function run(items, opts) {
+  // TODO: split this function
+  // console.log();
+  // console.debug()
+  // console.trace();
+  // debugger;
+  items.forEach(x => console.log(x));
+  console.log(a); return compute(b);
+  if (opts.debuggerEnabled) { start(); }
+  console.log(
+    "multi-line",
+    items
+  );
+  chargeCustomer(order); // TODO: retry
+  const url = "http://XXX.example.com";
+  const link = '<a href="#TODO">later</a>';
+  // HACK: first of two
+  // XXX second of two
+  return items; // FIXME
+}
+def load(name):
+    # FIXME: cache this
+    logger.debug("loaded %s", name)
+    # print() # DEBUG
+    # print() # debug
+    timeout = compute_timeout()  # TODO: tune
+    return name
+// System.out.println(); // DEBUG
+Debug.Print(total)
+## TODO
+"##;
+
+    #[test]
+    fn test_clean_debug_preset_golden_lf() {
+        // Verified failure: the patterns matched anywhere in a line and up
+        // to its last `)`, so `items.forEach(x => console.log(x));` became
+        // `items.forEach(x => // console.log();`, `console.log(a); return
+        // compute(b);` lost its return, `opts.debuggerEnabled` became
+        // `opts.// debugger;Enabled`, and Python `logger.debug(...)` got a
+        // `//` stub, which is not a comment in Python.
+        assert_eq!(
+            apply_preset(&Preset::CleanDebug, PRESET_GOLDEN_INPUT),
+            CLEAN_DEBUG_GOLDEN_OUTPUT
+        );
+    }
+
+    #[test]
+    fn test_clean_debug_preset_golden_crlf() {
+        // Same golden pair with CRLF endings: stubs replace the statement
+        // only, and every line keeps its \r\n.
+        assert_eq!(
+            apply_preset(
+                &Preset::CleanDebug,
+                &PRESET_GOLDEN_INPUT.replace('\n', "\r\n")
+            ),
+            CLEAN_DEBUG_GOLDEN_OUTPUT.replace('\n', "\r\n")
+        );
+    }
+
     #[test]
     fn test_replace_silently_skips_binary_files() {
         let temp_dir = TempDir::new().unwrap();
