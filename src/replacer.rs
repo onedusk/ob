@@ -1799,6 +1799,16 @@ mod tests {
     }
 
     #[test]
+    fn test_block_removal_preserves_mixed_line_endings() {
+        // Every kept line keeps its own terminator, and the blank lines that
+        // go with the block are recognised whichever terminator they carry.
+        assert_eq!(
+            remove_block("one\r\n\n# S\r\nx\n# E\n\r\n\ntwo\r\nthree\n", "# S", "# E"),
+            "one\r\n\ntwo\r\nthree\n"
+        );
+    }
+
+    #[test]
     fn test_block_sharing_a_line_leaves_the_other_code_intact() {
         let rm = |content: &str| remove_block(content, "/* S */", "/* E */");
 
