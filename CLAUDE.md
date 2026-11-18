@@ -252,6 +252,7 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 - Empty lines left after block removal are automatically cleaned up
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors (multi-line removals can also use `blocks`)
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)
+- Config files are parsed strictly: an unknown key in a scan patterns file or a replace config is an error naming the key. A scan patterns file takes an optional `exclusions` list of names to skip below each input directory (no effect with `-e`, which loads no file)
 - `scan` streams files with `BufReader`/`BufWriter`; `replace` reads each file into memory
 - File modifications use atomic writes via `tempfile::NamedTempFile`
 - The incremental-scan cache lives at `$XDG_CACHE_HOME/oober/` (platform cache dir when unset) and stores matched line contents in plaintext — see the README's cache note

@@ -149,6 +149,10 @@ exclusions:
   - build
 ```
 
+`exclusions` names are matched against the path below each input directory (not against the input's own path), and an excluded directory is not walked, even with `--hidden` or `--no-ignore`. A file named as an input is never excluded. The list comes from the patterns file, so it has no effect with `-e` inline patterns, which load no file.
+
+The only keys are `patterns` (each entry with `name` and `pattern`) and `exclusions`. Any other key is an error that names the key, so a typo cannot be silently ignored.
+
 ### Replace Configuration (`replace_config.yaml`)
 
 ```yaml
@@ -177,6 +181,8 @@ extensions: [js, ts, py, rb]
 # Optional: directories to exclude
 exclude: [node_modules, target, .git]
 ```
+
+The only keys are `patterns`, `replacements`, `blocks` (each entry with `start` and `end`), `extensions` and `exclude`. Any other key is an error that names the key, so a typo cannot be silently ignored. `patterns` and `replacements` may both be left out of a config that only removes `blocks`.
 
 ## Architecture
 

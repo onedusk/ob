@@ -3,7 +3,7 @@ use crate::errors::Result;
 use crate::fingerprint::{FileFingerprint, Fingerprinter};
 use crate::output_formatter::{OutputFormat, OutputFormatter};
 use crate::state_manager::{CACHE_FORMAT, CachedMatch, FileState, ScanState, StateManager};
-use crate::util::{require_valid_extensions, resolve_workers, should_process_file};
+use crate::util::{is_excluded, require_valid_extensions, resolve_workers, should_process_file};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::RegexSet;
@@ -254,32 +254,41 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
     let exts = require_valid_extensions(&extensions)?;
 
     // Load patterns: inline -e flags take precedence over the patterns file.
-    let patterns: Vec<Pattern> = if !inline_patterns.is_empty() {
-        inline_patterns
+    // The file's `exclusions` come with it, so inline patterns have none.
+    let (patterns, exclusions): (Vec<Pattern>, Vec<String>) = if !inline_patterns.is_empty() {
+        let patterns = inline_patterns
             .into_iter()
             .enumerate()
             .map(|(i, pattern)| Pattern {
                 name: format!("inline_{}", i + 1),
                 pattern,
             })
-            .collect()
+            .collect();
+        (patterns, Vec::new())
     } else {
         // The patterns file resolves ONLY as given (absolute, or relative to
         // the current directory): a typo'd path must be an error, never a
         // silent fallback to a same-named file elsewhere (e.g. a stale copy
         // in $XDG_CONFIG_HOME/oober), which for a security scan would be a
         // false all-clear.
-        let loaded = ConfigLoader::load_scan_config(&patterns_file)?.patterns;
+        let loaded = ConfigLoader::load_scan_config(&patterns_file)?;
         // Report on stderr which file is used; stdout carries the results.
         eprintln!("Using patterns file: {}", patterns_file.display());
-        loaded
+        (loaded.patterns, loaded.exclusions)
     };
     let patterns_hash = compute_patterns_hash(&patterns);
 
     // Create scanner
     let scanner = Arc::new(Scanner::new(patterns)?);
 
-    let files = collect_files(&inputs, &exts, hidden, no_ignore, output.as_deref())?;
+    let files = collect_files(
+        &inputs,
+        &exts,
+        hidden,
+        no_ignore,
+        &exclusions,
+        output.as_deref(),
+    )?;
 
     // Prepare output. Creating the file truncates it, so this comes after the
     // inputs are collected: a bad input path must not wipe earlier results.
@@ -449,6 +458,7 @@ fn collect_files(
     extensions: &HashSet<String>,
     hidden: bool,
     no_ignore: bool,
+    exclusions: &[String],
     output: Option<&Path>,
 ) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
@@ -477,7 +487,20 @@ fn collect_files(
                 files.push(input.to_path_buf());
             }
         } else if input.is_dir() {
-            for entry in build_walker(input, hidden, no_ignore).build() {
+            let mut walker = build_walker(input, hidden, no_ignore);
+
+            // Excluded names are matched against the path below this input,
+            // so the directories above it never count, and an excluded
+            // directory is pruned instead of being walked and then filtered.
+            // A file named as an input is never excluded.
+            let root = input.clone();
+            let excludes = exclusions.to_vec();
+            walker.filter_entry(move |entry| {
+                let path = entry.path();
+                !is_excluded(path.strip_prefix(&root).unwrap_or(path), &excludes)
+            });
+
+            for entry in walker.build() {
                 // A single unreadable entry (e.g. a permission-denied
                 // subdirectory) must not kill the whole scan.
                 let entry = match entry {
@@ -766,6 +789,7 @@ mod tests {
             &HashSet::new(),
             hidden,
             no_ignore,
+            &[],
             None,
         )?;
         Ok(scanner.scan_files_parallel(&files, workers)?.0)
@@ -920,7 +944,14 @@ mod tests {
 
         let sequential = scan_dir(&scanner, dir, Some(1), false, false);
         let parallel = scan_dir(&scanner, dir, Some(2), false, false);
-        let collected = collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false, None);
+        let collected = collect_files(
+            &[dir.to_path_buf()],
+            &HashSet::new(),
+            false,
+            false,
+            &[],
+            None,
+        );
 
         // Restore permissions before asserting so TempDir cleanup succeeds.
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
@@ -1034,12 +1065,27 @@ mod tests {
 
         // collect_files on its own must agree.
         assert!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false, None)
-                .unwrap()
-                .is_empty()
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                false,
+                false,
+                &[],
+                None
+            )
+            .unwrap()
+            .is_empty()
         );
         assert_eq!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), true, false, None).unwrap(),
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                true,
+                false,
+                &[],
+                None
+            )
+            .unwrap(),
             vec![dir.join(".env")]
         );
     }
@@ -1077,14 +1123,74 @@ mod tests {
 
         // collect_files on its own must agree.
         assert!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false, None)
-                .unwrap()
-                .is_empty()
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                false,
+                false,
+                &[],
+                None
+            )
+            .unwrap()
+            .is_empty()
         );
         assert_eq!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, true, None).unwrap(),
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                false,
+                true,
+                &[],
+                None
+            )
+            .unwrap(),
             vec![dir.join("secret.txt")]
         );
+    }
+
+    #[test]
+    fn test_exclusions_prune_names_below_the_input_root_only() {
+        // The input root is itself named `vendor`: only names below it are
+        // matched, so the root is walked and its `vendor/` child is pruned.
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("vendor");
+        fs::create_dir_all(root.join("vendor").join("lib")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("app.txt"), "x\n").unwrap();
+        fs::write(root.join("vendor").join("dep.txt"), "x\n").unwrap();
+        fs::write(root.join("vendor").join("lib").join("deep.txt"), "x\n").unwrap();
+        let exclusions = ["vendor".to_string()];
+        let none = HashSet::new();
+
+        // --hidden and --no-ignore do not bring an excluded directory back.
+        let files = collect_files(
+            std::slice::from_ref(&root),
+            &none,
+            true,
+            true,
+            &exclusions,
+            None,
+        )
+        .unwrap();
+        assert_eq!(files, vec![root.join("src").join("app.txt")]);
+
+        // Without exclusions the same walk reaches all three files.
+        let files =
+            collect_files(std::slice::from_ref(&root), &none, true, true, &[], None).unwrap();
+        assert_eq!(files.len(), 3, "got: {files:?}");
+
+        // A file named as an input is not excluded.
+        let explicit = root.join("vendor").join("dep.txt");
+        let files = collect_files(
+            std::slice::from_ref(&explicit),
+            &none,
+            false,
+            false,
+            &exclusions,
+            None,
+        )
+        .unwrap();
+        assert_eq!(files, vec![explicit]);
     }
 
     #[cfg(unix)]

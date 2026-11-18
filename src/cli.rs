@@ -81,6 +81,11 @@ pub enum Commands {
     ///       pattern: 'AKIA[0-9A-Z]{16}'
     ///     - name: todo
     ///       pattern: 'TODO|FIXME|HACK'
+    ///   exclusions: [node_modules, vendor]   # optional
+    ///
+    /// `exclusions` lists names to skip, matched below each input directory;
+    /// a file named as an input is never excluded. It has no effect with -e,
+    /// which loads no patterns file. An unknown key in the file is an error.
     Scan {
         /// Path to the YAML file defining the scan patterns.
         #[arg(short, long, default_value = "patterns.yaml")]
@@ -167,6 +172,7 @@ pub enum Commands {
     ///   blocks:
     ///     - start: '/* DEBUG START */'
     ///       end: '/* DEBUG END */'
+    /// An unknown key in the config file is an error.
     ///
     /// Patterns are matched against the whole file content, not line-by-line:
     /// use (?m) for per-line ^/$ anchors (e.g. '(?m)[ \t]+$').

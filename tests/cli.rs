@@ -821,6 +821,105 @@ fn scan_never_scans_its_own_output_file_given_as_a_relative_path() {
 }
 
 #[test]
+fn scan_config_exclusions_skip_directories_even_with_no_ignore() {
+    // `exclusions` used to be documented but read by no code, so vendor/
+    // was scanned. The patterns file lives outside the scanned tree.
+    let temp = TempDir::new().unwrap();
+    let scanme = temp.path().join("scanme");
+    fs::create_dir_all(scanme.join("vendor").join("lib")).unwrap();
+    fs::create_dir_all(scanme.join("src")).unwrap();
+    fs::write(scanme.join("src").join("app.txt"), "TODO app\n").unwrap();
+    fs::write(scanme.join("vendor").join("dep.txt"), "TODO dep\n").unwrap();
+    fs::write(
+        scanme.join("vendor").join("lib").join("deep.txt"),
+        "TODO deep\n",
+    )
+    .unwrap();
+    let patterns = temp.path().join("patterns.yaml");
+    fs::write(
+        &patterns,
+        "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusions:\n  - vendor\n",
+    )
+    .unwrap();
+    let out = temp.path().join("results.txt");
+
+    ob().arg("scan")
+        .arg("-p")
+        .arg(&patterns)
+        .arg("--hidden")
+        .arg("--no-ignore")
+        .arg("-o")
+        .arg(&out)
+        .arg(&scanme)
+        .assert()
+        .success();
+    let results = fs::read_to_string(&out).unwrap();
+    assert!(results.contains("TODO app"), "got: {results}");
+    assert!(
+        !results.contains("vendor"),
+        "vendor/ must be skipped: {results}"
+    );
+
+    // A file named as an input is scanned even inside an excluded directory.
+    ob().arg("scan")
+        .arg("-p")
+        .arg(&patterns)
+        .arg("-o")
+        .arg(&out)
+        .arg(scanme.join("vendor").join("dep.txt"))
+        .assert()
+        .success();
+    let results = fs::read_to_string(&out).unwrap();
+    assert!(results.contains("TODO dep"), "got: {results}");
+}
+
+#[test]
+fn scan_config_with_an_unknown_key_fails_naming_the_key() {
+    // A typo in a key used to be ignored, so the setting silently did
+    // nothing. The scan must fail and name the key.
+    let temp = TempDir::new().unwrap();
+    let scanme = temp.path().join("scanme");
+    fs::create_dir(&scanme).unwrap();
+    fs::write(scanme.join("a.txt"), "TODO\n").unwrap();
+    let patterns = temp.path().join("patterns.yaml");
+    fs::write(
+        &patterns,
+        "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusion:\n  - vendor\n",
+    )
+    .unwrap();
+
+    ob().arg("scan")
+        .arg("-p")
+        .arg(&patterns)
+        .arg(&scanme)
+        .assert()
+        .failure()
+        .stderr(contains("unknown field `exclusion`"));
+}
+
+#[test]
+fn replace_config_with_an_unknown_key_fails_naming_the_key_and_changes_nothing() {
+    // `replacement:` (singular) used to be ignored, leaving `replacements`
+    // empty. The run must fail before any file is touched.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("a.txt"), "TODO\n").unwrap();
+    let config = temp.path().join("config.yaml");
+    fs::write(&config, "patterns: ['TODO']\nreplacement: ['DONE']\n").unwrap();
+
+    ob().arg("replace")
+        .arg(&work)
+        .arg("-c")
+        .arg(&config)
+        .assert()
+        .failure()
+        .stderr(contains("unknown field `replacement`"));
+    assert_eq!(fs::read_to_string(work.join("a.txt")).unwrap(), "TODO\n");
+    assert!(!work.join("a.txt.bak").exists());
+}
+
+#[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     // clap usage errors exit with code 2; an unknown format must not silently

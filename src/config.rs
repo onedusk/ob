@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 /// Represents a named pattern used for scanning.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Pattern {
     /// The name of the pattern.
     pub name: String,
@@ -14,14 +15,26 @@ pub struct Pattern {
 }
 
 /// Configuration for the scan operation.
+///
+/// Unknown keys are rejected, so a misspelled key fails with its name
+/// instead of being ignored.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScanConfig {
     /// A list of patterns to scan for.
     pub patterns: Vec<Pattern>,
+    /// An optional list of file or directory names to skip, matched against
+    /// the path components below each input directory.
+    #[serde(default)]
+    pub exclusions: Vec<String>,
 }
 
 /// Configuration for the replace operation.
+///
+/// Unknown keys are rejected, so a misspelled key fails with its name
+/// instead of being ignored.
 #[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ReplaceConfig {
     /// A list of regex patterns to search for. May be omitted in a config
     /// that only removes `blocks`.
@@ -45,6 +58,7 @@ pub struct ReplaceConfig {
 
 /// Defines a block of text to be ignored, specified by start and end patterns.
 #[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Block {
     /// The pattern that marks the start of a block.
     pub start: String,
@@ -194,6 +208,77 @@ blocks:
         assert_eq!(config.blocks.len(), 1);
         assert_eq!(config.blocks[0].start, "# Copyright (c) 2024");
         crate::replacer::Replacer::new(config).unwrap();
+    }
+
+    #[test]
+    fn test_unknown_keys_are_rejected_by_name() {
+        let temp = TempDir::new().unwrap();
+        let unknown_key = |err: Error, key: &str| {
+            let msg = err.to_string();
+            assert!(msg.contains(&format!("unknown field `{key}`")), "{msg}");
+        };
+
+        // ScanConfig: a misspelled top-level key.
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusion: [vendor]\n",
+        );
+        let Err(err) = ConfigLoader::load_scan_config(&path) else {
+            panic!("an unknown scan key must be rejected");
+        };
+        unknown_key(err, "exclusion");
+
+        // Pattern: an extra key on one entry.
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\n    severity: high\n",
+        );
+        let Err(err) = ConfigLoader::load_scan_config(&path) else {
+            panic!("an unknown pattern key must be rejected");
+        };
+        unknown_key(err, "severity");
+
+        // ReplaceConfig: `excludes` for `exclude`.
+        let path = write_config(
+            temp.path(),
+            "patterns: ['a']\nreplacements: ['b']\nexcludes: [target]\n",
+        );
+        let Err(err) = ConfigLoader::load_replace_config(&path) else {
+            panic!("an unknown replace key must be rejected");
+        };
+        unknown_key(err, "excludes");
+
+        // Block: an extra key next to start/end.
+        let path = write_config(
+            temp.path(),
+            "blocks:\n  - start: 'A'\n    end: 'B'\n    stop: 'C'\n",
+        );
+        let Err(err) = ConfigLoader::load_replace_config(&path) else {
+            panic!("an unknown block key must be rejected");
+        };
+        unknown_key(err, "stop");
+    }
+
+    #[test]
+    fn test_scan_config_exclusions_default_to_empty() {
+        let temp = TempDir::new().unwrap();
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\n",
+        );
+        let Ok(config) = ConfigLoader::load_scan_config(&path) else {
+            panic!("a scan config without exclusions must load");
+        };
+        assert!(config.exclusions.is_empty());
+
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusions: [vendor, dist]\n",
+        );
+        let Ok(config) = ConfigLoader::load_scan_config(&path) else {
+            panic!("a scan config with exclusions must load");
+        };
+        assert_eq!(config.exclusions, ["vendor", "dist"]);
     }
 
     #[test]
