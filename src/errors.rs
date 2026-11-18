@@ -59,12 +59,21 @@ pub enum Error {
     #[error("replace finished with {0} file(s) failed")]
     ReplaceFailed(usize),
 
-    /// A file `replace` refuses to change: something it cannot treat as this
-    /// file's backup already sits at the `.bak` path.
+    /// A file `replace` refuses to change: a regular file it cannot treat as
+    /// this file's backup already sits at the `.bak` path.
     #[error(
         "backup {0} already exists and oober cannot tell that it still matches this file, so the file was left unchanged; run `ob undo` to restore the backup or `ob clean-backups` to remove it (add --all-bak if oober did not create it), or pass --no-backup"
     )]
     BackupExists(PathBuf),
+
+    /// A file `replace` refuses to change: a directory or a symlink sits at
+    /// the `.bak` path. Neither `undo` nor `clean-backups` lists a directory
+    /// or a dangling symlink, and `undo` restores only from a regular file,
+    /// so the message must not send the user there.
+    #[error(
+        "the backup path {0} is taken by something that is not a regular file (a directory or a symlink), so the file was left unchanged; move it or remove it yourself, or pass --no-backup"
+    )]
+    BackupPathTaken(PathBuf),
 
     /// A replace run stopped before changing any file: the records of the
     /// backups it would create cannot be written.

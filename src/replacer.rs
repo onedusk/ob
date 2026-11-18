@@ -178,6 +178,8 @@ fn find_backups(dir: &Path) -> BackupCandidates {
 /// still leads back to the pre-oober original. Anything else at the path is
 /// an error. Modifying the file anyway would leave its current state with no
 /// backup, and a later undo would wipe every edit made since the first run.
+/// The error for a directory or a symlink is its own variant: undo and
+/// clean-backups cannot clear those the way they clear a regular file.
 fn check_backup(path: &Path) -> Result<(PathBuf, Option<BackupRecord>)> {
     let mut backup_path = path.as_os_str().to_owned();
     backup_path.push(".bak");
@@ -186,6 +188,9 @@ fn check_backup(path: &Path) -> Result<(PathBuf, Option<BackupRecord>)> {
     let Ok(backup_metadata) = fs::symlink_metadata(&backup_path) else {
         return Ok((backup_path, None));
     };
+    if !backup_metadata.is_file() {
+        return Err(Error::BackupPathTaken(backup_path));
+    }
     let record =
         backup_records::load(&backup_path).filter(|record| record.describes(&backup_metadata));
     if let Some(record) = record {

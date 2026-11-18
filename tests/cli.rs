@@ -1453,6 +1453,70 @@ fn replace_refuses_a_file_whose_bak_path_is_taken() {
 }
 
 #[test]
+fn replace_refusal_names_a_way_past_it_that_works_for_what_sits_at_the_bak_path() {
+    // Verified failure: every refusal said to run `ob undo` or
+    // `ob clean-backups` (with --all-bak). Neither command lists a directory
+    // or a dangling symlink, so for those the advice changed nothing and the
+    // next run refused the same file again.
+    let refusal = |occupy: &dyn Fn(&Path)| {
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path();
+        let file = dir.join("a.txt");
+        let backup = dir.join("a.txt.bak");
+        fs::write(&file, "alpha one\n").unwrap();
+        occupy(&backup);
+
+        let output = ob()
+            .arg("replace")
+            .arg(dir)
+            .arg("-p")
+            .arg("alpha")
+            .arg("-r")
+            .arg("beta")
+            .assert()
+            .failure()
+            .stderr(contains("a.txt.bak"))
+            .stderr(contains("--no-backup"))
+            .get_output()
+            .clone();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+        (temp, String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+
+    // A regular file is listed by undo and clean-backups with --all-bak.
+    let (_temp, stderr) = refusal(&|backup| fs::write(backup, "my own copy\n").unwrap());
+    assert!(stderr.contains("ob undo"), "{stderr}");
+    assert!(stderr.contains("--all-bak"), "{stderr}");
+
+    // Anything else has to be moved or removed by hand.
+    let by_hand = |stderr: &str| {
+        assert!(stderr.contains("remove it yourself"), "{stderr}");
+        assert!(!stderr.contains("ob undo"), "{stderr}");
+        assert!(!stderr.contains("clean-backups"), "{stderr}");
+    };
+
+    let (temp, stderr) = refusal(&|backup| fs::create_dir(backup).unwrap());
+    by_hand(&stderr);
+    // Following the advice gets the file processed and backed up.
+    let dir = temp.path();
+    fs::remove_dir(dir.join("a.txt.bak")).unwrap();
+    replace_alpha_with_beta(dir);
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "beta one\n");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+        "alpha one\n"
+    );
+
+    #[cfg(unix)]
+    {
+        let (_temp, stderr) = refusal(&|backup| {
+            std::os::unix::fs::symlink(backup.with_file_name("nowhere"), backup).unwrap()
+        });
+        by_hand(&stderr);
+    }
+}
+
+#[test]
 fn replace_dry_run_leaves_files_byte_identical() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path();
