@@ -91,7 +91,7 @@ fn run() -> Result<()> {
                     "  ob rename -d . -p '\\.tsx$' -r '.jsx' --dry-run  # Preview .tsx -> .jsx"
                 );
                 eprintln!(
-                    "  ob rename -d . -p '(\\d+)_(.*)' -r '$2_$1'       # Reorder name parts"
+                    "  ob rename -d . -p '^(\\d+)_(.+?)(\\.[^.]+)?$' -r '${{2}}_${{1}}${{3}}'  # 12_intro.md -> intro_12.md"
                 );
                 eprintln!("\nFor more options: ob rename --help");
                 process::exit(1);

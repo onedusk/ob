@@ -104,6 +104,9 @@ ob rename --dir /path/to/project --pattern "old_name" --replacement "new_name" -
 
 # Rename files
 ob rename --dir /path/to/project --pattern "old_name" --replacement "new_name"
+
+# Reorder name parts with capture groups (12_intro.md -> intro_12.md)
+ob rename --dir /path/to/project --pattern '^(\d+)_(.+?)(\.[^.]+)?$' --replacement '${2}_${1}${3}'
 ```
 
 ### Manage backups
@@ -312,6 +315,8 @@ Options:
 - `-w, --workers <N>` - Number of threads to use
 - `<INPUTS>...` - Files or directories to process (like `scan`); the same file reached twice is processed once
 
+Replacement text (`-r`, and `replacements` entries in a config file) can reference the pattern's capture groups: `$1` or `${1}` by index, `${name}` by name. Use the `${1}` form when a letter, digit, or underscore follows the reference: `$1_x` refers to a group named `1_x`, not to group 1 followed by `_x`. Write `$$` for a literal dollar sign. Single-quote such arguments so the shell leaves the `$` alone.
+
 ### `undo`
 
 Restore files from backups.
@@ -338,7 +343,7 @@ Options:
 
 - `-d, --dir <PATH>` - Directory to process
 - `-p, --pattern <PATTERN>` - Regex pattern to match filenames
-- `-r, --replacement <TEXT>` - Replacement string
+- `-r, --replacement <TEXT>` - Replacement string; capture groups as `$1` or `${1}`, `$$` for a literal dollar sign (same rules as `replace`)
 - `--dry-run` - Preview changes without applying
 - `-w, --workers <N>` - Accepted for compatibility; renames always execute serially so collision checks cannot race
 

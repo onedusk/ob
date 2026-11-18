@@ -170,6 +170,11 @@ pub enum Commands {
     /// Patterns are matched against the whole file content, not line-by-line:
     /// use (?m) for per-line ^/$ anchors (e.g. '(?m)[ \t]+$').
     ///
+    /// Replacements can reference capture groups: $1 or ${1}, and ${name} for
+    /// named groups. Use the ${1} form when a letter, digit or underscore
+    /// follows the reference: '$1_x' refers to a group named '1_x'. Write $$
+    /// for a literal dollar sign.
+    ///
     /// Available presets: remove-copyright, clean-debug, remove-todos, trim-whitespace,
     /// remove-empty-comments, tabs-to-spaces, spaces-to-tabs
     Replace {
@@ -193,6 +198,7 @@ pub enum Commands {
         pattern: Option<String>,
 
         /// The string to replace the matched pattern with. Requires -p/--pattern.
+        /// Can include capture groups (e.g., `$1` or `${1}`); `$$` is a literal dollar sign.
         #[arg(short, long, requires = "pattern")]
         replacement: Option<String>,
 
@@ -264,9 +270,12 @@ pub enum Commands {
     /// EXAMPLES:
     ///   ob rename -d . -p 'test_(.*)' -r 'spec_$1'      # test_*.js -> spec_*.js
     ///   ob rename -d . -p '\\.tsx$' -r '.jsx' --dry-run  # Preview .tsx -> .jsx
-    ///   ob rename -d . -p '(\\d+)_(.*)' -r '$2_$1'      # Reorder name parts
+    ///   ob rename -d . -p '^(\d+)_(.+?)(\.[^.]+)?$' -r '${2}_${1}${3}'  # 12_intro.md -> intro_12.md
     ///
-    /// Supports regex capture groups: $1, $2, etc.
+    /// The replacement can reference capture groups: $1 or ${1}, and ${name}
+    /// for named groups. Use the ${1} form when a letter, digit or underscore
+    /// follows the reference: '$1_x' refers to a group named '1_x'. Write $$
+    /// for a literal dollar sign.
     Rename {
         /// The directory containing files to rename.
         #[arg(short, long, required = true)]
@@ -276,7 +285,8 @@ pub enum Commands {
         #[arg(short, long, required = true)]
         pattern: String,
 
-        /// The replacement string. Can include capture groups from the pattern (e.g., `$1`).
+        /// The replacement string. Can include capture groups from the pattern
+        /// (e.g., `$1` or `${1}`); `$$` is a literal dollar sign.
         #[arg(short, long, required = true)]
         replacement: String,
 

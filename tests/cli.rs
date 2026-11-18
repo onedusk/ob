@@ -1153,6 +1153,30 @@ fn rename_collision_with_default_workers_never_loses_data() {
     }
 }
 
+#[test]
+fn rename_reorder_example_from_help_swaps_name_parts() {
+    // The example shipped in `ob rename --help` and the usage banner.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("12_intro.md"), "intro").unwrap();
+
+    ob().arg("rename")
+        .arg("-d")
+        .arg(dir)
+        .arg("-p")
+        .arg(r"^(\d+)_(.+?)(\.[^.]+)?$")
+        .arg("-r")
+        .arg("${2}_${1}${3}")
+        .assert()
+        .success();
+
+    assert!(!dir.join("12_intro.md").exists());
+    assert_eq!(
+        fs::read_to_string(dir.join("intro_12.md")).unwrap(),
+        "intro"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // completions & manpage
 // ---------------------------------------------------------------------------
