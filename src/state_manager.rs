@@ -5,12 +5,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// The cache format number written by this version.
+///
+/// Raise it whenever caches written by older code must not be trusted any
+/// more: `load_state` drops a cache whose number differs, so each project is
+/// scanned in full once and its cache rebuilt.
+pub const CACHE_FORMAT: u32 = 1;
+
 /// Represents the overall state of a scan, including metadata and file details.
 /// This struct is serialized to and from a JSON file to cache scan results.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScanState {
     /// The version of the tool that created the state, used for compatibility checks.
     pub version: String,
+    /// The cache format number, see [`CACHE_FORMAT`]. Caches written before
+    /// the number existed have no such field and read as 0.
+    #[serde(default)]
+    pub format: u32,
     /// The timestamp of the last scan.
     pub last_scan: SystemTime,
     /// A map of file paths to their last known state.
@@ -144,8 +155,9 @@ impl StateManager {
 
     /// Loads the `ScanState` from the cache file for the current project.
     ///
-    /// If the cache file does not exist, or if the version in the cache file
-    /// does not match the current tool version, it returns `Ok(None)`.
+    /// If the cache file does not exist, or if the version or the cache format
+    /// number in the cache file does not match the current tool, it returns
+    /// `Ok(None)`.
     pub fn load_state(&self) -> Result<Option<ScanState>> {
         let state_file = self.state_file_path();
 
@@ -157,8 +169,8 @@ impl StateManager {
         let state: ScanState = serde_json::from_str(&contents)?;
 
         // Validate version compatibility
-        if state.version != env!("CARGO_PKG_VERSION") {
-            // Version mismatch, invalidate cache
+        if state.version != env!("CARGO_PKG_VERSION") || state.format != CACHE_FORMAT {
+            // Version or cache format mismatch, invalidate cache
             return Ok(None);
         }
 
@@ -232,6 +244,7 @@ mod tests {
 
         let mut state = ScanState {
             version: env!("CARGO_PKG_VERSION").to_string(),
+            format: CACHE_FORMAT,
             last_scan: SystemTime::now(),
             files: HashMap::new(),
             patterns_hash: "test_hash".to_string(),
@@ -274,6 +287,7 @@ mod tests {
 
         let state = ScanState {
             version: env!("CARGO_PKG_VERSION").to_string(),
+            format: CACHE_FORMAT,
             last_scan: SystemTime::now(),
             files: HashMap::new(),
             patterns_hash: "perm_test".to_string(),
@@ -326,6 +340,26 @@ mod tests {
     }
 
     #[test]
+    fn test_old_cache_format_is_ignored() {
+        let temp_dir = TempDir::new().unwrap();
+        let manager =
+            StateManager::with_state_dir(temp_dir.path().join("cache"), temp_dir.path()).unwrap();
+
+        // A cache written before the format number existed. The tool version
+        // is the current one, so only the format can invalidate it.
+        let old = format!(
+            r#"{{"version":"{}","last_scan":{{"secs_since_epoch":0,"nanos_since_epoch":0}},"files":{{}},"patterns_hash":"test","scan_results":{{}}}}"#,
+            env!("CARGO_PKG_VERSION")
+        );
+        fs::write(manager.state_file_path(), old).unwrap();
+
+        assert!(
+            manager.load_state().unwrap().is_none(),
+            "a cache without the current format number must be dropped"
+        );
+    }
+
+    #[test]
     fn test_version_invalidation() {
         let temp_dir = TempDir::new().unwrap();
         // `StateManager::new` would write into the real user cache dir.
@@ -334,6 +368,7 @@ mod tests {
 
         let state = ScanState {
             version: "0.0.1".to_string(), // Old version
+            format: CACHE_FORMAT,
             last_scan: SystemTime::now(),
             files: HashMap::new(),
             patterns_hash: "test".to_string(),

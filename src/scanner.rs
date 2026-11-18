@@ -2,7 +2,7 @@ use crate::config::{ConfigLoader, Pattern};
 use crate::errors::Result;
 use crate::fingerprint::{FileFingerprint, Fingerprinter};
 use crate::output_formatter::{OutputFormat, OutputFormatter};
-use crate::state_manager::{CachedMatch, FileState, ScanState, StateManager};
+use crate::state_manager::{CACHE_FORMAT, CachedMatch, FileState, ScanState, StateManager};
 use crate::util::{
     normalize_extensions, require_valid_extensions, resolve_workers, should_process_file,
 };
@@ -682,6 +682,7 @@ fn build_scan_state(
 
     ScanState {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        format: CACHE_FORMAT,
         last_scan: now,
         files: file_states,
         patterns_hash,
