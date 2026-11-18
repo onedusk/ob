@@ -173,7 +173,8 @@ pub enum Commands {
     /// Replacements can reference capture groups: $1 or ${1}, and ${name} for
     /// named groups. Use the ${1} form when a letter, digit or underscore
     /// follows the reference: '$1_x' refers to a group named '1_x'. Write $$
-    /// for a literal dollar sign.
+    /// for a literal dollar sign. A reference to a group the pattern does not
+    /// define is an error.
     ///
     /// Available presets: remove-copyright, clean-debug, remove-todos, trim-whitespace,
     /// remove-empty-comments, tabs-to-spaces, spaces-to-tabs
@@ -275,7 +276,8 @@ pub enum Commands {
     /// The replacement can reference capture groups: $1 or ${1}, and ${name}
     /// for named groups. Use the ${1} form when a letter, digit or underscore
     /// follows the reference: '$1_x' refers to a group named '1_x'. Write $$
-    /// for a literal dollar sign.
+    /// for a literal dollar sign. A reference to a group the pattern does not
+    /// define is an error.
     Rename {
         /// The directory containing files to rename.
         #[arg(short, long, required = true)]

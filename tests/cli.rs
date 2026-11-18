@@ -786,6 +786,40 @@ fn replace_pattern_without_replacement_is_a_usage_error_and_touches_nothing() {
 }
 
 #[test]
+fn replace_with_undefined_group_reference_errors_and_touches_nothing() {
+    // `$5` is a reference to group 5, which the pattern does not define; it
+    // used to expand to nothing and erase the matched text.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.txt");
+    fs::write(&file, "cost PRICE now\n").unwrap();
+
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-p")
+        .arg("PRICE")
+        .arg("-r")
+        .arg("$5")
+        .assert()
+        .failure()
+        .stderr(contains("${1}"))
+        .stderr(contains("$$"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "cost PRICE now\n");
+    assert!(!temp.path().join("a.txt.bak").exists());
+
+    // The documented escape writes a literal dollar sign.
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-p")
+        .arg("PRICE")
+        .arg("-r")
+        .arg("$$5")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "cost $5 now\n");
+}
+
+#[test]
 fn replace_nonexistent_input_errors_like_scan() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path();
@@ -1151,6 +1185,33 @@ fn rename_collision_with_default_workers_never_loses_data() {
             "no file content may be lost under parallel execution"
         );
     }
+}
+
+#[test]
+fn rename_with_undefined_group_reference_errors_and_renames_nothing() {
+    // `$2_` is a reference to a group named `2_`, which the pattern does
+    // not define; it used to expand to nothing and rename the file to `01`.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("01_intro.md"), "intro").unwrap();
+
+    ob().arg("rename")
+        .arg("-d")
+        .arg(dir)
+        .arg("-p")
+        .arg(r"(\d+)_(.*)")
+        .arg("-r")
+        .arg("$2_$1")
+        .assert()
+        .failure()
+        .stderr(contains("${1}"))
+        .stderr(contains("$$"));
+
+    let names: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["01_intro.md"]);
 }
 
 #[test]

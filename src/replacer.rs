@@ -2,7 +2,10 @@ use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
 use crate::patterns::load_preset;
-use crate::util::{is_backup_file, require_valid_extensions, resolve_workers, should_process_file};
+use crate::util::{
+    is_backup_file, require_valid_extensions, resolve_workers, should_process_file,
+    validate_replacement,
+};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::{Captures, Regex};
@@ -92,6 +95,14 @@ impl Replacer {
             .iter()
             .map(|p| Regex::new(p))
             .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        // A reference to a group the pattern does not define expands to
+        // nothing; reject it before any file is touched.
+        for (regex, replacement) in regex_patterns.iter().zip(&replacements) {
+            if let Some(replacement) = replacement {
+                validate_replacement(regex, replacement)?;
+            }
+        }
 
         // Compile block patterns
         let blocks: Vec<Regex> = config
@@ -1198,6 +1209,38 @@ mod tests {
             fs::read_to_string(dir.join("a.txt")).unwrap(),
             "alpha\n",
             "no file may be modified when an input path is invalid"
+        );
+    }
+
+    #[test]
+    fn test_undefined_group_reference_in_replacement_is_config_error() {
+        let config = |replacements: Vec<Option<String>>| ReplaceConfig {
+            patterns: vec![r"(\d+)_(\w+)".into(), "PRICE".into()],
+            replacements,
+            blocks: vec![],
+            extensions: None,
+            exclude: None,
+        };
+
+        // `$2_` names a group called `2_`; `$5` an index past the last group.
+        for bad in [
+            vec![Some("$2_$1".to_string()), None],
+            vec![Some("${2}_${1}".to_string()), Some("$5".to_string())],
+        ] {
+            let err = Replacer::new(config(bad))
+                .err()
+                .expect("an undefined group reference must be rejected");
+            assert!(matches!(err, Error::Config(_)), "{err}");
+        }
+
+        // Defined references, a literal `$$`, and a null replacement pass.
+        assert!(Replacer::new(config(vec![Some("${2}_${1}".to_string()), None])).is_ok());
+        assert!(
+            Replacer::new(config(vec![
+                Some("$2".to_string()),
+                Some("$$5".to_string())
+            ]))
+            .is_ok()
         );
     }
 

@@ -1,5 +1,5 @@
 use crate::errors::{Error, Result};
-use crate::util::is_backup_file;
+use crate::util::{is_backup_file, validate_replacement};
 use ignore::WalkBuilder;
 use regex::Regex;
 use std::collections::HashSet;
@@ -32,6 +32,9 @@ pub fn run_rename(
 ) -> Result<()> {
     let _ = workers;
     let regex = Regex::new(&pattern)?;
+    // A reference to a group the pattern does not define expands to nothing;
+    // reject it before any file is renamed.
+    validate_replacement(&regex, &replacement)?;
     let replacer = FileRenamer::new(regex, replacement);
 
     let mut all_files = Vec::new();
@@ -387,6 +390,26 @@ mod tests {
         ];
         contents.sort();
         assert_eq!(contents, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn test_run_rename_rejects_undefined_group_reference_and_renames_nothing() {
+        // `$2_` names a group called `2_`, which expands to nothing: the
+        // file used to be renamed to `01`.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("01_intro.md"), "intro").unwrap();
+
+        let result = run_rename(
+            dir.to_path_buf(),
+            r"(\d+)_(.*)".to_string(),
+            "$2_$1".to_string(),
+            false, // dry_run
+            false, // verbose
+            Some(1),
+        );
+        assert!(matches!(result, Err(Error::Config(_))));
+        assert_eq!(dir_names(dir), ["01_intro.md"]);
     }
 
     #[test]

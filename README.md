@@ -315,7 +315,7 @@ Options:
 - `-w, --workers <N>` - Number of threads to use
 - `<INPUTS>...` - Files or directories to process (like `scan`); the same file reached twice is processed once
 
-Replacement text (`-r`, and `replacements` entries in a config file) can reference the pattern's capture groups: `$1` or `${1}` by index, `${name}` by name. Use the `${1}` form when a letter, digit, or underscore follows the reference: `$1_x` refers to a group named `1_x`, not to group 1 followed by `_x`. Write `$$` for a literal dollar sign. Single-quote such arguments so the shell leaves the `$` alone.
+Replacement text (`-r`, and `replacements` entries in a config file) can reference the pattern's capture groups: `$1` or `${1}` by index, `${name}` by name. Use the `${1}` form when a letter, digit, or underscore follows the reference: `$1_x` refers to a group named `1_x`, not to group 1 followed by `_x`. Write `$$` for a literal dollar sign. A reference to a group the pattern does not define is an error (in `replace` and `rename` alike), so nothing is changed. Single-quote such arguments so the shell leaves the `$` alone.
 
 ### `undo`
 
