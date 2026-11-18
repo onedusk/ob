@@ -717,6 +717,110 @@ fn incremental_scan_overlapping_inputs_do_not_multiply_cached_matches() {
 }
 
 #[test]
+fn scan_keeps_the_existing_output_file_when_an_input_is_missing() {
+    // The output file was created, and so truncated, before the inputs were
+    // collected: a typo in an input path wiped the previous results.
+    let temp = TempDir::new().unwrap();
+    let out = temp.path().join("results.txt");
+    fs::write(&out, "previous results\n").unwrap();
+
+    ob().arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("-o")
+        .arg(&out)
+        .arg(temp.path().join("no_such_dir"))
+        .assert()
+        .failure()
+        .stderr(contains("Input path not found"));
+
+    assert_eq!(fs::read_to_string(&out).unwrap(), "previous results\n");
+}
+
+/// Fills `dir` with enough matching lines that the scan output is far
+/// larger than the output writer's buffer, so results reach the output file
+/// while the scan is still running.
+fn write_many_todo_files(dir: &Path) {
+    for i in 0..40 {
+        let content: String = (0..200).map(|n| format!("TODO item {n}\n")).collect();
+        fs::write(dir.join(format!("f{i}.txt")), content).unwrap();
+    }
+}
+
+#[test]
+fn scan_never_scans_its_own_output_file() {
+    // With the output file inside the scanned directory, the scan read its
+    // own results while writing them, and reported them as matches.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    write_many_todo_files(&work);
+    let out = work.join("results.txt");
+
+    // The second run starts with the first run's results in place.
+    for run in 1..=2 {
+        ob().arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("-w")
+            .arg("1")
+            .arg("-o")
+            .arg(&out)
+            .arg(&work)
+            .timeout(std::time::Duration::from_secs(60))
+            .assert()
+            .success();
+
+        let results = fs::read_to_string(&out).unwrap();
+        assert_eq!(
+            results.lines().count(),
+            40 * 200,
+            "run {run} must report exactly the matches of the scanned files"
+        );
+        assert!(
+            !results.contains("results.txt"),
+            "run {run} must not report the output file"
+        );
+    }
+}
+
+#[test]
+fn scan_never_scans_its_own_output_file_given_as_a_relative_path() {
+    // `-o results.txt` has no directory part; the output file must still be
+    // recognized among the files found under `.`.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    write_many_todo_files(&work);
+
+    for run in 1..=2 {
+        ob().current_dir(&work)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("-w")
+            .arg("1")
+            .arg("-o")
+            .arg("results.txt")
+            .arg(".")
+            .timeout(std::time::Duration::from_secs(60))
+            .assert()
+            .success();
+
+        let results = fs::read_to_string(work.join("results.txt")).unwrap();
+        assert_eq!(
+            results.lines().count(),
+            40 * 200,
+            "run {run} must report exactly the matches of the scanned files"
+        );
+        assert!(
+            !results.contains("results.txt"),
+            "run {run} must not report the output file"
+        );
+    }
+}
+
+#[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     // clap usage errors exit with code 2; an unknown format must not silently

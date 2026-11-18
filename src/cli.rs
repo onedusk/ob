@@ -92,6 +92,7 @@ pub enum Commands {
         regex: Vec<String>,
 
         /// Path to the output file. If omitted, results are written to standard output.
+        /// The output file is never scanned itself, even inside a scanned directory.
         #[arg(short, long)]
         output: Option<PathBuf>,
 

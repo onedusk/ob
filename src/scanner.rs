@@ -319,10 +319,10 @@ pub struct ScanOptions {
 ///
 /// This function handles:
 /// 1. Loading the scan patterns from a configuration file.
-/// 2. Setting up the output writer (either a file or `stdout`).
-/// 3. Iterating through the input paths and dispatching to the appropriate
-///    `Scanner` methods (for files or directories).
-/// 4. Writing the results.
+/// 2. Collecting the files to scan from the input paths.
+/// 3. Setting up the output writer (either a file or `stdout`).
+/// 4. Scanning the collected files.
+/// 5. Writing the results.
 pub fn run_scan(options: ScanOptions) -> Result<()> {
     let ScanOptions {
         patterns_file,
@@ -382,13 +382,15 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
     // Create scanner
     let scanner = Arc::new(Scanner::new(patterns)?);
 
-    // Prepare output
+    let files = collect_files(&inputs, &exts, hidden, no_ignore, output.as_deref())?;
+
+    // Prepare output. Creating the file truncates it, so this comes after the
+    // inputs are collected: a bad input path must not wipe earlier results.
     let mut writer: Box<dyn Write + Send> = match output {
         Some(path) => Box::new(BufWriter::new(File::create(path)?)),
         None => Box::new(BufWriter::new(std::io::stdout())),
     };
 
-    let files = collect_files(&inputs, &exts, hidden, no_ignore)?;
     let project_root = determine_project_root(&inputs)?;
     let mut files_to_scan = files.clone();
     let mut cached_matches: Vec<Match> = Vec::new();
@@ -550,6 +552,7 @@ fn collect_files(
     extensions: &HashSet<String>,
     hidden: bool,
     no_ignore: bool,
+    output: Option<&Path>,
 ) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     // A file reached twice (named explicitly and found in a directory walk,
@@ -562,6 +565,14 @@ fn collect_files(
         |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     // Canonical form of each walked directory, resolved once per directory.
     let mut canonical_dirs: HashMap<PathBuf, PathBuf> = HashMap::new();
+
+    // The output file starts out as already seen, so it is never scanned
+    // when it lies inside an input directory: the scan would read its own
+    // results while writing them. Only an output file that already exists
+    // can be among the inputs, since it is created after this collection.
+    if let Some(Ok(output)) = output.map(std::fs::canonicalize) {
+        seen.insert(output);
+    }
 
     for input in inputs {
         if input.is_file() {
@@ -993,7 +1004,7 @@ mod tests {
 
         let sequential = scanner.scan_directory(dir, &[], false, false);
         let parallel = scanner.scan_directory_parallel(dir, &[], Some(1), false, false);
-        let collected = collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false);
+        let collected = collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false, None);
 
         // Restore permissions before asserting so TempDir cleanup succeeds.
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
@@ -1107,12 +1118,12 @@ mod tests {
 
         // collect_files (the run_scan path) must agree with the helpers.
         assert!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false, None)
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), true, false).unwrap(),
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), true, false, None).unwrap(),
             vec![dir.join(".env")]
         );
     }
@@ -1150,12 +1161,12 @@ mod tests {
 
         // collect_files (the run_scan path) must agree with the helpers.
         assert!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false, None)
                 .unwrap()
                 .is_empty()
         );
         assert_eq!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, true).unwrap(),
+            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, true, None).unwrap(),
             vec![dir.join("secret.txt")]
         );
     }

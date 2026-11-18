@@ -276,7 +276,7 @@ Find patterns in files and directories.
 Options:
 
 - `-p, --patterns <FILE>` - Path to YAML patterns file (default: patterns.yaml)
-- `-o, --output <FILE>` - Output file (default: stdout)
+- `-o, --output <FILE>` - Output file (default: stdout); it is never scanned itself, even inside a scanned directory
 - `-x, --ext <EXTENSIONS>` - Comma-separated file extensions to include
 - `-w, --workers <N>` - Number of threads to use (default: logical CPU cores; env: `OOBER_WORKERS`)
 - `--hidden` - Include hidden files and directories (skipped by default)
