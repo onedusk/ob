@@ -141,12 +141,14 @@ fn find_backups(dir: &Path) -> BackupCandidates {
     }
 
     // Recorded backups the walk did not reach: backups of hidden inputs,
-    // and paths where something other than a file sits now.
+    // and paths where something other than a file sits now. Only a backup
+    // that is known to be gone is stale; one that cannot be looked at (e.g.
+    // inside an unreadable directory) stays recorded, and acting on it
+    // reports the error.
     for (backup, original) in records {
-        if fs::symlink_metadata(&backup).is_ok() {
-            backups.recorded.push((backup, original));
-        } else {
-            backups.stale.push(backup);
+        match fs::symlink_metadata(&backup) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => backups.stale.push(backup),
+            _ => backups.recorded.push((backup, original)),
         }
     }
 
@@ -545,7 +547,7 @@ impl Replacer {
         // A record whose backup is gone describes nothing any more.
         if !options.dry_run {
             for backup in &backups.stale {
-                backup_records::remove(backup);
+                backup_records::remove_stale(backup);
             }
         }
 
@@ -911,7 +913,7 @@ pub fn run_clean_backups(dir: PathBuf, dry_run: bool, all_bak: bool) -> Result<(
     // A record whose backup is gone describes nothing any more.
     if !dry_run {
         for backup in &backups.stale {
-            backup_records::remove(backup);
+            backup_records::remove_stale(backup);
         }
     }
 
@@ -2395,6 +2397,78 @@ Debug.Print(total)
         let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
         assert_eq!((stats.found, stats.failed), (0, 0));
         assert!(backup_records::load(&backup).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_undo_keeps_the_record_of_a_backup_it_cannot_reach() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Verified failure: a recorded backup inside an unreadable directory
+        // was taken for a deleted one and its record was dropped, so undo
+        // skipped the backup for good once the directory was readable again.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let locked = dir.join("locked");
+        fs::create_dir(&locked).unwrap();
+        let file = locked.join("t.txt");
+        let backup = locked.join("t.txt.bak");
+        fs::write(&file, "alpha\n").unwrap();
+        single_pattern_replacer("alpha", "beta")
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: true,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+        let result = Replacer::undo(dir, RECORDED_ONLY);
+        // Restore permissions before asserting so TempDir cleanup succeeds.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let stats = result.unwrap();
+        assert_eq!((stats.restored, stats.failed), (0, 1));
+        assert!(
+            backup_records::load(&backup).is_some(),
+            "the record of an unreachable backup must be kept"
+        );
+
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\n");
+    }
+
+    #[test]
+    fn test_undo_drops_the_record_of_a_backup_whose_directory_is_gone() {
+        // Verified failure: the record was looked up through the backup's
+        // parent directory, so once that directory was deleted the record
+        // could never be removed.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let sub = dir.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let file = sub.join("t.txt");
+        fs::write(&file, "alpha\n").unwrap();
+        single_pattern_replacer("alpha", "beta")
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: true,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+        fs::remove_dir_all(&sub).unwrap();
+
+        let canonical_dir = fs::canonicalize(dir).unwrap();
+        assert_eq!(backup_records::list_under(&canonical_dir).len(), 1);
+
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.failed), (0, 0));
+        assert!(backup_records::list_under(&canonical_dir).is_empty());
     }
 
     #[cfg(unix)]

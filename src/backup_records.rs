@@ -128,6 +128,13 @@ pub(crate) fn remove(backup: &Path) {
     }
 }
 
+/// Deletes the record of a backup that no longer exists. `canonical_backup`
+/// is the path as its record stores it; it is not resolved again, because
+/// the backup's directory may be gone too.
+pub(crate) fn remove_stale(canonical_backup: &Path) {
+    let _ = fs::remove_file(record_file(canonical_backup));
+}
+
 /// Every record whose backup lies under `canonical_dir`.
 ///
 /// A missing record directory is an empty list, and entries that cannot be
