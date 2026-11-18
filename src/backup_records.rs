@@ -9,7 +9,7 @@
 //! alone proves nothing: once a backup is deleted by hand its record stays
 //! behind, and a file the user later creates at that path is theirs.
 
-use crate::errors::Result;
+use crate::errors::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -101,6 +101,31 @@ fn record_file(canonical_backup: &Path) -> PathBuf {
     records_dir().join(format!("{:x}.json", hasher.finalize()))
 }
 
+/// Creates the record directory, owner-only on unix.
+fn create_records_dir(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Checks that records can be written, by creating the record directory and
+/// a throwaway file in it.
+///
+/// A backup is recorded after its file has been changed, so `replace` calls
+/// this before it changes anything. Without it, a record directory that
+/// cannot be used is found only once every file has been modified.
+pub(crate) fn check_writable() -> Result<()> {
+    let dir = records_dir();
+    create_records_dir(&dir)
+        .and_then(|()| NamedTempFile::new_in(&dir))
+        .map(drop)
+        .map_err(|e| Error::BackupRecordsDir(dir, e.to_string()))
+}
+
 /// Records that `backup` holds the pre-oober content of `original`, along
 /// with the size and modification time each of the two has right now.
 ///
@@ -122,12 +147,7 @@ pub(crate) fn write(backup: &Path, original: &Path, created: SystemTime) -> Resu
     };
 
     let dir = records_dir();
-    fs::create_dir_all(&dir)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
-    }
+    create_records_dir(&dir)?;
 
     // Atomic write, owner-only like the scan cache.
     let mut temp_file = NamedTempFile::new_in(&dir)?;

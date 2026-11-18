@@ -66,6 +66,13 @@ pub enum Error {
     )]
     BackupExists(PathBuf),
 
+    /// A replace run stopped before changing any file: the records of the
+    /// backups it would create cannot be written.
+    #[error(
+        "backup records cannot be written to {0} ({1}), so no file was changed; make that directory writable, point XDG_CACHE_HOME at a directory that is, or pass --no-backup"
+    )]
+    BackupRecordsDir(PathBuf, String),
+
     /// A file that was modified, but whose backup could not be recorded.
     #[error(
         "the file was modified, but its backup {0} could not be recorded ({1}); `ob undo` restores it only with --all-bak"

@@ -770,6 +770,13 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
         }
     }
 
+    // A backup is recorded after its file has been written. Make sure the
+    // records can be written before any file is changed: otherwise every
+    // file is modified first and reported as an error afterwards.
+    if !no_backup && !dry_run && !all_files.is_empty() {
+        backup_records::check_writable()?;
+    }
+
     // Stats
     let processed = AtomicUsize::new(0);
     let modified = AtomicUsize::new(0);

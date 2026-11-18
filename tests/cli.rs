@@ -1323,6 +1323,52 @@ fn replace_refuses_a_file_edited_since_its_backup_was_made() {
 }
 
 #[test]
+fn replace_changes_nothing_when_backup_records_cannot_be_written() {
+    // Verified failure: the record is written after the file. With a record
+    // directory that could not be created, every matching file was rewritten
+    // first, each then got a per-file error, and the summary said
+    // `Files changed : 0`.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path().join("tree");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "alpha a\n").unwrap();
+    fs::write(dir.join("b.txt"), "alpha b\n").unwrap();
+    // A regular file sits where the record directory belongs.
+    let cache = temp.path().join("cache");
+    fs::create_dir_all(cache.join("oober")).unwrap();
+    fs::write(cache.join("oober").join("backups"), "").unwrap();
+
+    let replace = || {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache).arg("replace").arg(&dir);
+        cmd.arg("-p").arg("alpha").arg("-r").arg("beta");
+        cmd
+    };
+    let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+
+    replace()
+        .assert()
+        .failure()
+        .stderr(contains("backups"))
+        .stderr(contains("XDG_CACHE_HOME"))
+        .stderr(contains("--no-backup"));
+    assert_eq!(read("a.txt"), "alpha a\n");
+    assert_eq!(read("b.txt"), "alpha b\n");
+    assert!(!dir.join("a.txt.bak").exists());
+    assert!(!dir.join("b.txt.bak").exists());
+
+    // A dry run writes no record, so it still previews.
+    replace().arg("--dry-run").assert().success();
+    assert_eq!(read("a.txt"), "alpha a\n");
+
+    // --no-backup is the stated way through in the same environment.
+    replace().arg("--no-backup").assert().success();
+    assert_eq!(read("a.txt"), "beta a\n");
+    assert_eq!(read("b.txt"), "beta b\n");
+    assert!(!dir.join("a.txt.bak").exists());
+}
+
+#[test]
 fn replace_twice_without_an_edit_between_keeps_the_oldest_backup() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path();
