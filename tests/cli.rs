@@ -675,6 +675,39 @@ fn replace_accepts_positional_directory_inputs() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn replace_does_not_descend_into_excluded_directories() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // An excluded directory must be pruned, not walked and then filtered:
+    // reading an unreadable one would print a walk warning.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("a.txt"), "alpha\n").unwrap();
+    let excluded = dir.join("build");
+    fs::create_dir(&excluded).unwrap();
+    fs::set_permissions(&excluded, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let output = ob()
+        .arg("replace")
+        .arg(dir)
+        .args(["-p", "alpha", "-r", "beta", "-e", "build", "--no-backup"])
+        .output()
+        .unwrap();
+
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&excluded, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("skipping unreadable path"),
+        "the excluded directory must not be read: {stderr}"
+    );
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "beta\n");
+}
+
 #[test]
 fn replace_accepts_a_single_file_input() {
     let temp = TempDir::new().unwrap();

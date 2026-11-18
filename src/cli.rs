@@ -216,7 +216,8 @@ pub enum Commands {
         #[arg(short = 'x', long = "ext", value_delimiter = ',')]
         extensions: Vec<String>,
 
-        /// A comma-separated list of directories to exclude.
+        /// A comma-separated list of directory names to exclude, matched
+        /// below each input directory (not against the input's own path).
         #[arg(short = 'e', long = "exclude", value_delimiter = ',')]
         exclude: Vec<String>,
 

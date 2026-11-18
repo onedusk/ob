@@ -29,6 +29,17 @@ pub fn is_backup_file(path: &Path) -> bool {
     path.extension().and_then(|os| os.to_str()) == Some("bak")
 }
 
+/// Returns `true` if any component of `rel_path` is named in `excludes`.
+///
+/// `rel_path` must be relative to the input root being walked, so the
+/// directories above the input never take part in the match: an input at
+/// `/x/build/app` is not excluded by `build`.
+pub(crate) fn is_excluded(rel_path: &Path, excludes: &[String]) -> bool {
+    rel_path
+        .components()
+        .any(|c| excludes.iter().any(|ex| c.as_os_str() == ex.as_str()))
+}
+
 /// Normalizes user-supplied extensions (trim whitespace, strip a leading dot,
 /// lowercase, drop empty entries) into a set for O(1) lookups.
 pub fn normalize_extensions(extensions: &[String]) -> HashSet<String> {
@@ -178,6 +189,20 @@ mod tests {
         assert!(!is_backup_file(Path::new("a.txt")));
         assert!(!is_backup_file(Path::new("a.bak.txt")));
         assert!(!is_backup_file(Path::new("bak")));
+    }
+
+    #[test]
+    fn test_is_excluded_matches_whole_components_of_the_relative_path() {
+        let excludes = strings(&["build", "vendor"]);
+        assert!(is_excluded(Path::new("build"), &excludes));
+        assert!(is_excluded(Path::new("build/a.txt"), &excludes));
+        assert!(is_excluded(Path::new("src/vendor/lib/a.txt"), &excludes));
+        // Whole components only, never a substring of one.
+        assert!(!is_excluded(Path::new("rebuild/a.txt"), &excludes));
+        assert!(!is_excluded(Path::new("build.rs"), &excludes));
+        // The input root itself has an empty relative path.
+        assert!(!is_excluded(Path::new(""), &excludes));
+        assert!(!is_excluded(Path::new("build/a.txt"), &[]));
     }
 
     #[test]

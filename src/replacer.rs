@@ -3,7 +3,7 @@ use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
 use crate::patterns::load_preset;
 use crate::util::{
-    is_backup_file, require_valid_extensions, resolve_workers, should_process_file,
+    is_backup_file, is_excluded, require_valid_extensions, resolve_workers, should_process_file,
     validate_replacement,
 };
 use ignore::WalkBuilder;
@@ -496,6 +496,16 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
             let mut walker = WalkBuilder::new(input);
             walker.standard_filters(true); // Respect .gitignore
 
+            // Excluded names are matched against the path below this input,
+            // so the directories above it never count, and an excluded
+            // directory is pruned instead of being walked and then filtered.
+            let root = input.clone();
+            let excludes = exclude_dirs.clone();
+            walker.filter_entry(move |entry| {
+                let path = entry.path();
+                !is_excluded(path.strip_prefix(&root).unwrap_or(path), &excludes)
+            });
+
             for entry in walker.build() {
                 // A single unreadable entry (e.g. a permission-denied
                 // subdirectory) must not kill the whole run, matching scan's
@@ -509,19 +519,10 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
                 };
                 let path = entry.path();
 
-                // Check if path should be excluded
-                let should_exclude = exclude_dirs
-                    .iter()
-                    .any(|ex| path.components().any(|c| c.as_os_str() == ex.as_str()));
-
                 // Never process .bak backups: rewriting a backup's content
                 // (and stacking a .bak.bak on top) would make undo restore
                 // content the original file never held.
-                if !should_exclude
-                    && path.is_file()
-                    && !is_backup_file(path)
-                    && should_process_file(path, &exts)
-                {
+                if path.is_file() && !is_backup_file(path) && should_process_file(path, &exts) {
                     // Symlinks are skipped here for the same reason as
                     // explicit symlink inputs above; a link's target inside
                     // the tree is still reached under its own path.
@@ -1074,6 +1075,44 @@ mod tests {
             fs::read_to_string(dir.join("generated").join("b.txt")).unwrap(),
             "AAA\n",
             "CLI-excluded directory must be skipped"
+        );
+    }
+
+    #[test]
+    fn test_exclude_matches_only_below_the_input_root() {
+        // `ob replace <tmp>/build/app -e build`: the input sits under an
+        // ancestor directory named like the exclude. Only a `build`
+        // directory inside the input may be excluded.
+        let temp_dir = TempDir::new().unwrap();
+        let input = temp_dir.path().join("build").join("app");
+        fs::create_dir_all(input.join("build")).unwrap();
+        fs::write(input.join("a.txt"), "AAA\n").unwrap();
+        fs::write(input.join("build").join("b.txt"), "AAA\n").unwrap();
+
+        run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("AAA".into()),
+            replacement: Some("BBB".into()),
+            inputs: vec![input.clone()],
+            extensions: vec![],
+            exclude: vec!["build".to_string()],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(input.join("a.txt")).unwrap(),
+            "BBB\n",
+            "an ancestor of the input named like an exclude must not exclude the input"
+        );
+        assert_eq!(
+            fs::read_to_string(input.join("build").join("b.txt")).unwrap(),
+            "AAA\n",
+            "an excluded directory inside the input must be skipped"
         );
     }
 

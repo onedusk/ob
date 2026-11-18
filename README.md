@@ -309,7 +309,7 @@ Options:
 - `-r, --replacement <TEXT>` - Replacement text (requires `-p`); to delete the line after each match, use a config file with a `null` replacement
 - `-d, --dir <PATH>` - Directory to process (legacy alias for a positional input)
 - `-x, --ext <EXTENSIONS>` - File extensions to include
-- `-e, --exclude <DIRS>` - Directories to exclude
+- `-e, --exclude <DIRS>` - Directory names to exclude, matched below each input directory (not against the input's own path); files named as inputs are exempt
 - `--no-backup` - Don't create backup files
 - `--dry-run` - Preview changes without applying
 - `-w, --workers <N>` - Number of threads to use
