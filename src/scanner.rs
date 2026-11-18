@@ -430,7 +430,18 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
 
             for file in &files {
                 if let Some(file_state) = state.files.get(file) {
-                    let (changed, fingerprint) = fp.check_file(file, file_state)?;
+                    // A file that cannot be checked must not end the scan:
+                    // treat it as changed, so it is scanned like any other.
+                    let (changed, fingerprint) = match fp.check_file(file, file_state) {
+                        Ok(checked) => checked,
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: could not check '{}' for changes: {e}; re-scanning",
+                                file.display()
+                            );
+                            (true, None)
+                        }
+                    };
                     if !changed {
                         // Unchanged: the cached fingerprint is still valid, so
                         // state saving must not read the file again.

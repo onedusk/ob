@@ -579,6 +579,52 @@ fn incremental_content_hash_scan_survives_an_unreadable_file() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn incremental_scan_survives_a_cached_file_that_became_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Change detection hashes a cached file under --content-hash. When that
+    // failed, the error ended the whole scan before any file was scanned.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("ok.txt"), "hello TODO world\n").unwrap();
+    let locked = work.join("locked.txt");
+    fs::write(&locked, "TODO locked\n").unwrap();
+
+    let scan = || {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("--incremental")
+            .arg("--content-hash")
+            .arg(&work);
+        cmd
+    };
+
+    // Prime the cache while both files are readable.
+    scan().assert().success().stdout(contains("TODO locked"));
+
+    if !make_unreadable(&locked) {
+        return;
+    }
+    let second = scan().assert();
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    second
+        .success()
+        .stdout(contains("ok.txt"))
+        .stderr(contains("locked.txt"));
+
+    // The file was not scanned on the second run, so it must not be cached
+    // as unchanged: readable again, it is scanned and its match is back.
+    scan().assert().success().stdout(contains("TODO locked"));
+}
+
 #[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
