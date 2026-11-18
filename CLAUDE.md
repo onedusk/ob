@@ -247,6 +247,7 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 
 - The tool respects `.gitignore` files automatically via the `ignore` crate; `scan` skips hidden files and directories by default too, and accepts `--hidden` / `--no-ignore` to include hidden or ignored files
 - Binary files are automatically skipped based on content detection
+- `replace` never processes symlinks: each is skipped with `Skipping symlink: <path>` on stderr, and its target is edited only under its own path
 - Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the oldest backup preserves the original)
 - Empty lines left after block removal are automatically cleaned up
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors (multi-line removals can also use `blocks`)

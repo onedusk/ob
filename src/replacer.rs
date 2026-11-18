@@ -472,7 +472,16 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
             // never treated as input (binary files are skipped at processing
             // time, exactly as for walked files).
             if !is_backup_file(input) && should_process_file(input, &exts) {
-                add_file(input);
+                // Never process a symlink: the atomic write would replace the
+                // link with a regular file and leave its target unchanged.
+                if input
+                    .symlink_metadata()
+                    .is_ok_and(|m| m.file_type().is_symlink())
+                {
+                    eprintln!("Skipping symlink: {}", input.display());
+                } else {
+                    add_file(input);
+                }
             }
         } else if input.is_dir() {
             let mut walker = WalkBuilder::new(input);
@@ -504,7 +513,14 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
                     && !is_backup_file(path)
                     && should_process_file(path, &exts)
                 {
-                    add_file(path);
+                    // Symlinks are skipped here for the same reason as
+                    // explicit symlink inputs above; a link's target inside
+                    // the tree is still reached under its own path.
+                    if entry.file_type().is_some_and(|t| t.is_symlink()) {
+                        eprintln!("Skipping symlink: {}", path.display());
+                    } else {
+                        add_file(path);
+                    }
                 }
             }
         } else {
@@ -1918,5 +1934,104 @@ mod tests {
         let stats = Replacer::undo(dir, false).unwrap();
         assert_eq!(stats.restored, 1);
         assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_replace_never_processes_symlink_to_file_in_tree() {
+        // docs/README.md -> ../README.md. Whichever spelling is reached first,
+        // the link must stay a link and the real file must be transformed
+        // exactly once (X -> XX applied twice would leave XXXX). Input order
+        // fixes which one is reached first; the last case leaves it to the
+        // walk.
+        type Inputs = fn(&Path) -> Vec<PathBuf>;
+        let cases: [(&str, Inputs); 3] = [
+            ("link first", |root| {
+                vec![root.join("docs"), root.to_path_buf()]
+            }),
+            ("target first", |root| {
+                vec![root.join("README.md"), root.to_path_buf()]
+            }),
+            ("walk order", |root| vec![root.to_path_buf()]),
+        ];
+
+        for (case, inputs) in cases {
+            let temp_dir = TempDir::new().unwrap();
+            let root = temp_dir.path();
+            let target = root.join("README.md");
+            fs::write(&target, "X\n").unwrap();
+            fs::create_dir(root.join("docs")).unwrap();
+            let link = root.join("docs").join("README.md");
+            std::os::unix::fs::symlink("../README.md", &link).unwrap();
+
+            run_replace(ReplaceOptions {
+                preset: None,
+                config_file: None,
+                pattern: Some("X".into()),
+                replacement: Some("XX".into()),
+                inputs: inputs(root),
+                extensions: vec![],
+                exclude: vec![],
+                no_backup: true,
+                dry_run: false,
+                verbose: false,
+                workers: Some(1),
+            })
+            .unwrap();
+
+            assert!(
+                fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "{case}: the symlink must not be replaced by a regular file"
+            );
+            assert_eq!(
+                fs::read_to_string(&target).unwrap(),
+                "XX\n",
+                "{case}: the real file must be transformed exactly once"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_explicit_symlink_input_is_skipped_and_target_untouched() {
+        // The target lives outside the processed inputs, so only the link
+        // could reach it.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let target = dir.join("real.txt");
+        fs::write(&target, "X\n").unwrap();
+        let link = dir.join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("X".into()),
+            replacement: Some("XX".into()),
+            inputs: vec![link.clone()],
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: true,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
+        .unwrap();
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "an explicit symlink input must stay a symlink"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "X\n",
+            "the target of an explicit symlink input must not be modified"
+        );
     }
 }

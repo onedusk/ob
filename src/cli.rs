@@ -176,6 +176,10 @@ pub enum Commands {
     /// for a literal dollar sign. A reference to a group the pattern does not
     /// define is an error.
     ///
+    /// Symbolic links are never processed: each one is reported on stderr and
+    /// left as a link. The file it points to is edited only when that file is
+    /// itself among the inputs.
+    ///
     /// Available presets: remove-copyright, clean-debug, remove-todos, trim-whitespace,
     /// remove-empty-comments, tabs-to-spaces, spaces-to-tabs
     Replace {
