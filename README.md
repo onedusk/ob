@@ -13,7 +13,7 @@ We currently use it internally to update copyright information, find and change 
 - **Safe replacements** - Replace or remove patterns with automatic `.bak` file creation
 - **Atomic file renaming** - Atomically rename files at scale.
 - **Undo support** - Restore files from backups with a single command
-- **Smart cleanup** - Automatically removes empty lines after block deletion and collapses consecutive empty lines
+- **Local block removal** - A removed block takes only its own lines and the blank lines directly next to it; blank lines elsewhere in the file are left alone
 - **Gitignore aware** - Respects `.gitignore` files automatically via the `ignore` crate (`scan` offers `--hidden` / `--no-ignore` to opt out)
 - **Directory exclusions** - Configure custom directory exclusions (e.g., node_modules, target) in YAML
 - **Backup management** - Clean up backup files when satisfied with changes
@@ -104,22 +104,32 @@ ob rename --dir /path/to/project --pattern "old_name" --replacement "new_name" -
 
 # Rename files
 ob rename --dir /path/to/project --pattern "old_name" --replacement "new_name"
+
+# Reorder name parts with capture groups (12_intro.md -> intro_12.md)
+ob rename --dir /path/to/project --pattern '^(\d+)_(.+?)(\.[^.]+)?$' --replacement '${2}_${1}${3}'
 ```
 
 ### Manage backups
 
 ```bash
-# Restore files from backups
+# Restore files from the backups oober created
 ob undo --dir /path
+
+# Preview what would be restored
+ob undo --dir /path --dry-run
 
 # Keep backup files after restore
 ob undo --dir /path --keep-backups
 
-# Remove backup files after verification
+# Remove oober's backup files after verification
 ob clean-backups --dir /path
 
 # Preview backup files before removal (shows total size)
 ob clean-backups --dir /path --dry-run
+
+# Also act on .bak files oober has no record of creating (preview first)
+ob undo --dir /path --all-bak --dry-run
+ob clean-backups --dir /path --all-bak --dry-run
 ```
 
 ## Configuration
@@ -145,6 +155,10 @@ exclusions:
   - dist
   - build
 ```
+
+`exclusions` names are matched against the path below each input directory (not against the input's own path), and an excluded directory is not walked, even with `--hidden` or `--no-ignore`. A file named as an input is never excluded. The list comes from the patterns file, so it has no effect with `-e` inline patterns, which load no file.
+
+The only keys are `patterns` (each entry with `name` and `pattern`) and `exclusions`. Any other key is an error that names the key, so a typo cannot be silently ignored. An empty `pattern` string is an error too: an empty regex matches every line.
 
 ### Replace Configuration (`replace_config.yaml`)
 
@@ -175,6 +189,8 @@ extensions: [js, ts, py, rb]
 exclude: [node_modules, target, .git]
 ```
 
+The only keys are `patterns`, `replacements`, `blocks` (each entry with `start` and `end`), `extensions` and `exclude`. Any other key is an error that names the key, so a typo cannot be silently ignored. An empty string in `patterns` is an error too: an empty regex matches at every position. `patterns` and `replacements` may both be left out of a config that only removes `blocks`.
+
 ## Architecture
 
 ### Core Components
@@ -183,7 +199,7 @@ exclude: [node_modules, target, .git]
 2. **File Walker**: `ignore` crate provides gitignore-aware traversal
 3. **Parallel Processing**: `rayon` enables multi-threaded file processing
 4. **Atomic Writes**: `tempfile` ensures safe file modifications
-5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten, so the first backup preserves the original
+5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise
 
 ### Command Structure
 
@@ -273,12 +289,12 @@ Find patterns in files and directories.
 Options:
 
 - `-p, --patterns <FILE>` - Path to YAML patterns file (default: patterns.yaml)
-- `-o, --output <FILE>` - Output file (default: stdout)
+- `-o, --output <FILE>` - Output file (default: stdout); it is never scanned itself, even inside a scanned directory
 - `-x, --ext <EXTENSIONS>` - Comma-separated file extensions to include
 - `-w, --workers <N>` - Number of threads to use (default: logical CPU cores; env: `OOBER_WORKERS`)
 - `--hidden` - Include hidden files and directories (skipped by default)
 - `--no-ignore` - Do not respect `.gitignore`/`.ignore` files (respected by default)
-- `<INPUTS>...` - Files or directories to scan
+- `<INPUTS>...` - Files or directories to scan; the same file reached twice is scanned once
 
 Note: By default, hidden files and directories (dotfiles such as `.env`, `.github/`) and anything matched by `.gitignore`/`.ignore` files are NOT scanned. For secret scanning, add `--hidden --no-ignore` so the most likely secret locations are not silently skipped.
 
@@ -288,7 +304,7 @@ Note: Output order is not guaranteed when using multiple workers. Use `-w 1` or 
 
 `ob scan -i` (`--incremental`) caches per-file scan state so unchanged files are skipped on the next run. `--content-hash` compares content hashes instead of modification timestamps, `--force-full` re-scans everything, and `--clear-cache` deletes the cache first.
 
-The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/oober/` on Linux, `~/Library/Caches/oober/` on macOS), one JSON file per scanned project. It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
+The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/oober/` on Linux, `~/Library/Caches/oober/` on macOS), one JSON file per scanned project (the `backups/` directory beside them holds `replace`'s backup records, see [`undo`](#undo)). It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
 
 `--no-cache-content` keeps matched text out of the on-disk cache entirely: only pattern names, file fingerprints, and line numbers are stored, and on a cache hit the matched lines are re-read from the unchanged files to reconstruct the output (if a re-read fails, the file is re-scanned). This keeps the incremental speedup without persisting secrets to disk; it requires `--incremental`.
 
@@ -296,19 +312,31 @@ The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/o
 
 Replace or remove patterns in files.
 
+The rules come from exactly one of `--preset`, `--config`, or `--pattern` (with `--replacement`); combining them is a usage error.
+
 Options:
 
 - `--preset <PRESET>` - Built-in pattern set: `remove-copyright`, `clean-debug`, `remove-todos`, `trim-whitespace`, `remove-empty-comments`, `tabs-to-spaces`, `spaces-to-tabs`
-- `-c, --config <FILE>` - YAML configuration file
-- `-p, --pattern <PATTERN>` - Single pattern to match
-- `-r, --replacement <TEXT>` - Replacement text
+  - `clean-debug` rewrites a debug call only when it is the whole statement on its own line, replacing it with a comment stub at the same indent (`  console.log(x);` becomes `  // console.log();`). It covers `console.log(...)`, `console.debug(...)`, `console.trace(...)`, `debugger`, Python `print(...)  # DEBUG` and Java `System.out.println(...); // DEBUG`. The call must start the line, its arguments must stay on that line and contain no `;`, and only an optional `;` and whitespace may follow. A call that shares its line with other code (`items.forEach(x => console.log(x));`), a multi-line call and an identifier such as `debuggerEnabled` are left alone. `DEBUG START` ... `DEBUG END` blocks (`//`, `/* */` and `#` forms) are removed. The match is textual, not parsed: a line that starts with a call and continues after its closing parenthesis without a `;` (`console.log(a) || fallback()`) is still treated as one statement, and stubbing the only statement of a brace-less `if` makes the next statement its body, so preview with `--dry-run`.
+  - `remove-todos` removes `//` and `#` comments that start with `TODO`, `FIXME`, `HACK` or `XXX`. A trailing comment is cut along with the whitespace before it and the code in front stays; a line holding only the comment is removed whole, line break included. The comment marker must start the line or follow whitespace, so `"http://XXX.example.com"`, `href="#TODO"` and `## TODO` are left alone. The match is textual, not parsed: a marker after whitespace inside a string literal (`"skip // TODO items"`) still counts as a comment, so preview with `--dry-run`.
+- `-c, --config <FILE>` - YAML configuration file; the file itself is never processed, even inside an input directory
+- `-p, --pattern <PATTERN>` - Single pattern to match (requires `-r`)
+- `-r, --replacement <TEXT>` - Replacement text (requires `-p`); to delete the line after each match, use a config file with a `null` replacement
 - `-d, --dir <PATH>` - Directory to process (legacy alias for a positional input)
 - `-x, --ext <EXTENSIONS>` - File extensions to include
-- `-e, --exclude <DIRS>` - Directories to exclude
-- `--no-backup` - Don't create backup files
+- `-e, --exclude <DIRS>` - Directory names to exclude, matched below each input directory (not against the input's own path); files named as inputs are exempt
+- `--no-backup` - Don't create backup files (and skip the existing-backup check below)
 - `--dry-run` - Preview changes without applying
 - `-w, --workers <N>` - Number of threads to use
 - `<INPUTS>...` - Files or directories to process (like `scan`); the same file reached twice is processed once
+
+Before changing a file, `replace` backs it up to `<file>.bak`. If something already sits at that path, the file is changed only when all of this holds: the `.bak` is the regular file oober recorded creating (it still has its recorded size and modification time), and the file still has the size and modification time oober left it with. That is the case for back-to-back runs, so the oldest backup is kept and `undo` still restores the original. In every other case (the `.bak` is your own file, a directory or a symlink, or the file was edited since oober last wrote it) the file is left unchanged, an error names the backup, the other files are still processed, and the run exits non-zero. Changing the file anyway would leave its current state with no backup, and a later `undo` would discard every edit made since the first run. To continue, run `ob undo` (restore the backup) or `ob clean-backups` (remove it; the next run backs up the file as it is now), adding `--all-bak` when oober did not create the `.bak`, or pass `--no-backup`. A directory or a symlink at the `.bak` path is the exception. Neither command lists a directory or a dangling symlink, and `undo` restores only from a regular file, so the error says to move or remove it yourself (or pass `--no-backup`). `--dry-run` makes the same check and reports the files a real run would refuse.
+
+Every backup is recorded for `undo` (see [`undo`](#undo)). Before it changes any file, `replace` checks that it can write those records. If the record directory cannot be created or written to, the run stops with an error that names the directory, and no file is changed: make the directory writable, point `XDG_CACHE_HOME` at a directory that is, or pass `--no-backup`. A `--dry-run` writes no record and skips this check.
+
+`replace` never processes a symbolic link to a file, whether it is found in a directory or named as an input: each one is reported on stderr (`Skipping symlink: <path>`) and left as a link. The file it points to is edited only when that file is itself among the inputs. A directory given as an input through a symlink is still walked.
+
+Replacement text (`-r`, and `replacements` entries in a config file) can reference the pattern's capture groups: `$1` or `${1}` by index, `${name}` by name. Use the `${1}` form when a letter, digit, or underscore follows the reference: `$1_x` refers to a group named `1_x`, not to group 1 followed by `_x`. Write `$$` for a literal dollar sign. A reference to a group the pattern does not define is an error (in `replace` and `rename` alike), so nothing is changed. Single-quote such arguments so the shell leaves the `$` alone.
 
 ### `undo`
 
@@ -318,6 +346,14 @@ Options:
 
 - `-d, --dir <PATH>` - Directory to restore
 - `--keep-backups` - Don't delete backup files after restore
+- `--all-bak` - Also restore `.bak` files oober has no record of creating
+- `--dry-run` - Preview files to be restored (`Would restore <path>`) without changing anything
+
+`undo` restores only the backups that `replace` created. Every time `replace` creates a `<file>.bak`, it writes a small record (the backup's path, size and modification time, the file's path, and the file's size and modification time after the write) to `$XDG_CACHE_HOME/oober/backups/` (the same cache directory as the incremental-scan cache; owner-only on Unix). `undo` and `clean-backups` act on the recorded backups under `--dir`, including the backup of a hidden file that was named as a `replace` input. Any other `*.bak` file in the tree, such as your own `settings.json.bak`, is left alone, and the summary says how many were. A `.bak` at a recorded path counts as oober's only while it has the recorded size and modification time: if you delete oober's backup by hand and later keep a file of your own at that path, that file is left alone too.
+
+Pass `--all-bak` to also act on the unrecorded `*.bak` files found in the tree (hidden files and directories are still skipped). You need it for backups made by oober 0.1.1, after the cache directory was deleted, and for a backup that was modified after oober created it. It restores every such `x.bak` over `x`, so preview with `--all-bak --dry-run` first.
+
+Each file is restored through a temporary file in its own directory and gets the backup's permissions. A restore that fails is reported and the others still run; `undo` then exits non-zero and says how many failed. `undo` refuses to restore over anything that is not a regular file (a directory or a symlink at the file's path) and from a backup that is not a regular file.
 
 ### `clean-backups`
 
@@ -327,6 +363,9 @@ Options:
 
 - `-d, --dir <PATH>` - Directory to clean
 - `--dry-run` - Preview files to be removed
+- `--all-bak` - Also remove `.bak` files oober has no record of creating
+
+Like `undo`, `clean-backups` removes only the backups `replace` recorded creating, and reports how many other `*.bak` files it left alone.
 
 ### `rename`
 
@@ -336,7 +375,7 @@ Options:
 
 - `-d, --dir <PATH>` - Directory to process
 - `-p, --pattern <PATTERN>` - Regex pattern to match filenames
-- `-r, --replacement <TEXT>` - Replacement string
+- `-r, --replacement <TEXT>` - Replacement string; capture groups as `$1` or `${1}`, `$$` for a literal dollar sign (same rules as `replace`)
 - `--dry-run` - Preview changes without applying
 - `-w, --workers <N>` - Accepted for compatibility; renames always execute serially so collision checks cannot race
 
@@ -373,13 +412,13 @@ Benchmark on a large codebase (100k files):
 
 ## Safety Features
 
-- **Automatic backups** - Creates `.bak` files before any modification; an existing backup is never overwritten
+- **Automatic backups** - Creates `.bak` files before any modification; an existing backup is never overwritten, and a file whose `.bak` path is already taken by something else is refused instead of being changed without a backup
 - **Atomic writes** - Uses temporary files to prevent corruption
 - **Dry-run mode** - Preview all changes before applying
 - **Binary detection** - Automatically skips binary files
 - **Gitignore respect** - Won't modify ignored files
 - **Comprehensive error handling** - Graceful failures with clear messages
-- **Empty line cleanup** - Intelligently handles whitespace after deletions
+- **Local block removal** - Removing a block changes only the blank lines directly next to it, never the rest of the file
 
 ## Building from Source
 
@@ -439,21 +478,22 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - The tool respects `.gitignore` files automatically; `scan` can opt out with `--hidden` / `--no-ignore`
 - Binary files are automatically skipped
-- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the first backup preserves the original)
-- Empty lines left after block removal are automatically cleaned up
+- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise (see [`replace`](#replace))
+- Block removal changes only the blank lines directly next to the removed block; blank lines elsewhere in the file are left as they are
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)
 
 ## Recent Enhancements
 
-### Empty Line Cleanup
+### Blank Lines Around Removed Blocks
 
-After removing multi-line blocks, the tool automatically:
+Removing a block (`blocks` in a config, or a preset that removes blocks) changes only the block and the blank lines directly next to it. A blank line holds nothing but spaces and tabs.
 
-- Removes all empty lines at the beginning of files
-- Collapses multiple consecutive empty lines to just one
-- Preserves single empty lines between content
-- Maintains proper file endings (preserves final newline if present)
+- A block that has its lines to itself is removed with its indent and its line break, so no empty line is left where it stood
+- When such a block starts the file or follows a blank line, the blank lines directly after it are removed too: a header block leaves no leading blank line, and a block between two paragraphs leaves the blank lines that were above it
+- When such a block ends the file, the blank lines directly before it are removed too
+- A block that shares its first or last line with other code is cut out of that line; the code and its line break stay
+- Everything else is copied byte for byte: blank lines elsewhere in the file (PEP 8 double blank lines, blank lines inside string literals) and every LF or CRLF line ending
 
 ### Backup Management
 

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 /// Represents a named pattern used for scanning.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Pattern {
     /// The name of the pattern.
     pub name: String,
@@ -14,20 +15,35 @@ pub struct Pattern {
 }
 
 /// Configuration for the scan operation.
+///
+/// Unknown keys are rejected, so a misspelled key fails with its name
+/// instead of being ignored.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScanConfig {
     /// A list of patterns to scan for.
     pub patterns: Vec<Pattern>,
+    /// An optional list of file or directory names to skip, matched against
+    /// the path components below each input directory.
+    #[serde(default)]
+    pub exclusions: Vec<String>,
 }
 
 /// Configuration for the replace operation.
+///
+/// Unknown keys are rejected, so a misspelled key fails with its name
+/// instead of being ignored.
 #[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ReplaceConfig {
-    /// A list of regex patterns to search for.
+    /// A list of regex patterns to search for. May be omitted in a config
+    /// that only removes `blocks`.
+    #[serde(default)]
     pub patterns: Vec<String>,
     /// A list of replacement strings. Each element corresponds to a pattern.
     /// `None` (`null` in YAML) deletes the line *after* each line matching the
     /// pattern; the matching line itself is kept.
+    #[serde(default)]
     pub replacements: Vec<Option<String>>,
     /// A list of blocks to ignore during replacement.
     #[serde(default)]
@@ -42,6 +58,7 @@ pub struct ReplaceConfig {
 
 /// Defines a block of text to be ignored, specified by start and end patterns.
 #[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Block {
     /// The pattern that marks the start of a block.
     pub start: String,
@@ -144,7 +161,16 @@ impl ConfigLoader {
                 e
             ))
         })?;
-        Ok(serde_yaml::from_reader(file)?)
+        let config: ScanConfig = serde_yaml::from_reader(file)?;
+        // An empty regex matches every line of every file.
+        if let Some(empty) = config.patterns.iter().find(|p| p.pattern.is_empty()) {
+            return Err(Error::Config(format!(
+                "pattern '{}' in '{}' is empty; an empty regex matches every line",
+                empty.name,
+                path.display()
+            )));
+        }
+        Ok(config)
     }
 
     /// Loads a `ReplaceConfig` from a YAML file.
@@ -154,7 +180,16 @@ impl ConfigLoader {
     /// * `path` - The path to the YAML configuration file.
     pub fn load_replace_config(path: &Path) -> Result<ReplaceConfig> {
         let file = File::open(path)?;
-        Ok(serde_yaml::from_reader(file)?)
+        let config: ReplaceConfig = serde_yaml::from_reader(file)?;
+        // An empty regex matches at every position of every file.
+        if let Some(index) = config.patterns.iter().position(|p| p.is_empty()) {
+            return Err(Error::Config(format!(
+                "`patterns` entry {} in '{}' is empty; an empty regex matches at every position",
+                index + 1,
+                path.display()
+            )));
+        }
+        Ok(config)
     }
 }
 
@@ -163,6 +198,170 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    /// Writes `yaml` to a config file in `dir` and returns its path.
+    fn write_config(dir: &Path, yaml: &str) -> PathBuf {
+        let path = dir.join("config.yaml");
+        fs::write(&path, yaml).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_blocks_only_replace_config_loads() {
+        // The README's "Remove copyright headers" example, as written: it
+        // has no `patterns` and no `replacements` key.
+        let temp = TempDir::new().unwrap();
+        let path = write_config(
+            temp.path(),
+            "# remove_copyright.yaml
+blocks:
+  - start: \"# Copyright (c) 2024\"
+    end: \"# DEALINGS IN THE SOFTWARE.\"
+",
+        );
+
+        let config = ConfigLoader::load_replace_config(&path).unwrap();
+        assert!(config.patterns.is_empty());
+        assert!(config.replacements.is_empty());
+        assert_eq!(config.blocks.len(), 1);
+        assert_eq!(config.blocks[0].start, "# Copyright (c) 2024");
+        crate::replacer::Replacer::new(config).unwrap();
+    }
+
+    #[test]
+    fn test_unknown_keys_are_rejected_by_name() {
+        let temp = TempDir::new().unwrap();
+        let unknown_key = |err: Error, key: &str| {
+            let msg = err.to_string();
+            assert!(msg.contains(&format!("unknown field `{key}`")), "{msg}");
+        };
+
+        // ScanConfig: a misspelled top-level key.
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusion: [vendor]\n",
+        );
+        let Err(err) = ConfigLoader::load_scan_config(&path) else {
+            panic!("an unknown scan key must be rejected");
+        };
+        unknown_key(err, "exclusion");
+
+        // Pattern: an extra key on one entry.
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\n    severity: high\n",
+        );
+        let Err(err) = ConfigLoader::load_scan_config(&path) else {
+            panic!("an unknown pattern key must be rejected");
+        };
+        unknown_key(err, "severity");
+
+        // ReplaceConfig: `excludes` for `exclude`.
+        let path = write_config(
+            temp.path(),
+            "patterns: ['a']\nreplacements: ['b']\nexcludes: [target]\n",
+        );
+        let Err(err) = ConfigLoader::load_replace_config(&path) else {
+            panic!("an unknown replace key must be rejected");
+        };
+        unknown_key(err, "excludes");
+
+        // Block: an extra key next to start/end.
+        let path = write_config(
+            temp.path(),
+            "blocks:\n  - start: 'A'\n    end: 'B'\n    stop: 'C'\n",
+        );
+        let Err(err) = ConfigLoader::load_replace_config(&path) else {
+            panic!("an unknown block key must be rejected");
+        };
+        unknown_key(err, "stop");
+    }
+
+    #[test]
+    fn test_scan_config_exclusions_default_to_empty() {
+        let temp = TempDir::new().unwrap();
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\n",
+        );
+        let Ok(config) = ConfigLoader::load_scan_config(&path) else {
+            panic!("a scan config without exclusions must load");
+        };
+        assert!(config.exclusions.is_empty());
+
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusions: [vendor, dist]\n",
+        );
+        let Ok(config) = ConfigLoader::load_scan_config(&path) else {
+            panic!("a scan config with exclusions must load");
+        };
+        assert_eq!(config.exclusions, ["vendor", "dist"]);
+    }
+
+    #[test]
+    fn test_empty_pattern_strings_are_rejected_by_entry() {
+        // An empty regex matches every line of every file (scan) and at
+        // every position (replace).
+        let temp = TempDir::new().unwrap();
+
+        let path = write_config(
+            temp.path(),
+            "patterns:\n  - name: todo\n    pattern: 'TODO'\n  - name: bullet\n    pattern: \"\"\n",
+        );
+        let Err(err) = ConfigLoader::load_scan_config(&path) else {
+            panic!("an empty scan pattern must be rejected");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("'bullet'"), "{msg}");
+        assert!(msg.contains("empty"), "{msg}");
+
+        let path = write_config(
+            temp.path(),
+            "patterns: ['TODO', '']\nreplacements: ['DONE', 'x']\n",
+        );
+        let Err(err) = ConfigLoader::load_replace_config(&path) else {
+            panic!("an empty replace pattern must be rejected");
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("entry 2"), "{msg}");
+        assert!(msg.contains("empty"), "{msg}");
+
+        // An empty replacement is still fine: it deletes each match.
+        let path = write_config(temp.path(), "patterns: ['TODO']\nreplacements: ['']\n");
+        assert!(ConfigLoader::load_replace_config(&path).is_ok());
+    }
+
+    #[test]
+    fn test_every_shipped_config_loads() {
+        // Every top-level config/*.yaml must load with the loader for its
+        // kind and compile (config/internal/ is not shipped and not read).
+        // A new file must be given a loader here.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("config");
+        let mut checked = Vec::new();
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_str().unwrap().to_string();
+            let loaded = match name.as_str() {
+                "grammar_patterns.yaml" => ConfigLoader::load_scan_config(&path)
+                    .and_then(|config| crate::scanner::Scanner::new(config.patterns))
+                    .map(|_| ()),
+                "example.yaml" => ConfigLoader::load_replace_config(&path)
+                    .and_then(crate::replacer::Replacer::new)
+                    .map(|_| ()),
+                other => panic!("config/{other} has no loader assigned in this test"),
+            };
+            if let Err(e) = loaded {
+                panic!("config/{name} must load: {e}");
+            }
+            checked.push(name);
+        }
+        checked.sort();
+        assert_eq!(checked, ["example.yaml", "grammar_patterns.yaml"]);
+    }
 
     #[test]
     fn test_find_config_uses_path_as_given() {
@@ -246,8 +445,11 @@ mod tests {
         let planted = exe_dir.join(&name);
         fs::write(&planted, "patterns: []\n").unwrap();
 
+        // The user config dir is injected so the lookup cannot probe the
+        // real one.
         let temp = TempDir::new().unwrap();
-        let result = ConfigLoader::find_config(Path::new(&name), temp.path());
+        let user_dir = temp.path().join("xdg").join("oober");
+        let result = ConfigLoader::find_config_in(Path::new(&name), temp.path(), Some(&user_dir));
         fs::remove_file(&planted).unwrap();
 
         let err = result.expect_err("a config next to the binary must not be picked up");

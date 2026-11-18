@@ -4,10 +4,12 @@ replacements: []
 # Define multi-line blocks to remove
 blocks:
   # 2025 version
-  - start: ''
+  - start: '# Copyright (c) 2025'
+    end: '# DEALINGS IN THE SOFTWARE.'
 
   # 2024 version
-  - start: ''
+  - start: '# Copyright (c) 2024'
+    end: '# DEALINGS IN THE SOFTWARE.'
 
 # Process all common code files
 extensions:

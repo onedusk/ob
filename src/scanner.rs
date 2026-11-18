@@ -2,10 +2,8 @@ use crate::config::{ConfigLoader, Pattern};
 use crate::errors::Result;
 use crate::fingerprint::{FileFingerprint, Fingerprinter};
 use crate::output_formatter::{OutputFormat, OutputFormatter};
-use crate::state_manager::{CachedMatch, FileState, ScanState, StateManager};
-use crate::util::{
-    normalize_extensions, require_valid_extensions, resolve_workers, should_process_file,
-};
+use crate::state_manager::{CACHE_FORMAT, CachedMatch, FileState, ScanState, StateManager};
+use crate::util::{is_excluded, require_valid_extensions, resolve_workers, should_process_file};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::RegexSet;
@@ -130,111 +128,18 @@ impl Scanner {
         Ok(matches)
     }
 
-    /// Scans a directory for files matching the given extensions and finds pattern matches.
-    ///
-    /// Hidden files and gitignored files are skipped unless `hidden` /
-    /// `no_ignore` are set (see [`build_walker`]).
-    ///
-    /// This is a sequential, single-threaded scan. For better performance on large
-    /// directories, use `scan_directory_parallel`.
-    pub fn scan_directory(
-        &self,
-        dir: &Path,
-        extensions: &[String],
-        hidden: bool,
-        no_ignore: bool,
-    ) -> Result<Vec<Match>> {
-        let extensions = normalize_extensions(extensions);
-        self.scan_directory_with_set(dir, &extensions, hidden, no_ignore)
-    }
-
-    fn scan_directory_with_set(
-        &self,
-        dir: &Path,
-        extensions: &HashSet<String>,
-        hidden: bool,
-        no_ignore: bool,
-    ) -> Result<Vec<Match>> {
-        let mut all_matches = Vec::new();
-
-        for entry in build_walker(dir, hidden, no_ignore).build() {
-            // A single unreadable entry must not kill the whole scan.
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(e) => {
-                    eprintln!("Warning: skipping unreadable path: {e}");
-                    continue;
-                }
-            };
-            let path = entry.path();
-            if path.is_file() && should_process_file(path, extensions) {
-                // A single unreadable file must not kill the whole scan.
-                match self.scan_file(path) {
-                    Ok(matches) => all_matches.extend(matches),
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: skipping unreadable file '{}': {e}",
-                            path.display()
-                        )
-                    }
-                }
-            }
-        }
-
-        Ok(all_matches)
-    }
-
-    /// Scans a directory in parallel using a Rayon thread pool.
-    ///
-    /// This function is significantly faster than `scan_directory` for large numbers
-    /// of files. It first collects all files to be scanned and then distributes the
-    /// scanning work across the thread pool.
-    pub fn scan_directory_parallel(
-        &self,
-        dir: &Path,
-        extensions: &[String],
-        workers: Option<usize>,
-        hidden: bool,
-        no_ignore: bool,
-    ) -> Result<Vec<Match>> {
-        let extensions = normalize_extensions(extensions);
-        self.scan_directory_parallel_with_set(dir, &extensions, workers, hidden, no_ignore)
-    }
-
-    fn scan_directory_parallel_with_set(
-        &self,
-        dir: &Path,
-        extensions: &HashSet<String>,
-        workers: Option<usize>,
-        hidden: bool,
-        no_ignore: bool,
-    ) -> Result<Vec<Match>> {
-        // Collect all file paths first
-        let files: Vec<PathBuf> = build_walker(dir, hidden, no_ignore)
-            .threads(resolve_workers(workers))
-            .build()
-            .filter_map(|entry| match entry {
-                Ok(entry) => Some(entry),
-                Err(e) => {
-                    // A single unreadable entry must not kill the whole scan.
-                    eprintln!("Warning: skipping unreadable path: {e}");
-                    None
-                }
-            })
-            .filter(|entry| {
-                let path = entry.path();
-                path.is_file() && should_process_file(path, extensions)
-            })
-            .map(|entry| entry.path().to_path_buf())
-            .collect();
-
-        self.scan_files_parallel(&files, workers)
-    }
-
     /// Scans a list of files in parallel using a local Rayon thread pool.
-    fn scan_files_parallel(&self, files: &[PathBuf], workers: Option<usize>) -> Result<Vec<Match>> {
+    ///
+    /// Returns the matches together with the paths that could not be scanned,
+    /// so callers can tell a file without matches from a file that was never
+    /// read.
+    fn scan_files_parallel(
+        &self,
+        files: &[PathBuf],
+        workers: Option<usize>,
+    ) -> Result<(Vec<Match>, Vec<PathBuf>)> {
         if files.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let pool = rayon::ThreadPoolBuilder::new()
@@ -244,23 +149,31 @@ impl Scanner {
         Ok(pool.install(|| {
             files
                 .par_iter()
-                .fold(Vec::new, |mut acc, path| {
-                    // A single unreadable file must not kill the whole scan.
-                    match self.scan_file(path) {
-                        Ok(matches) => acc.extend(matches),
-                        Err(e) => {
-                            eprintln!(
-                                "Warning: skipping unreadable file '{}': {e}",
-                                path.display()
-                            )
+                .fold(
+                    || (Vec::new(), Vec::new()),
+                    |mut acc, path| {
+                        // A single unreadable file must not kill the whole scan.
+                        match self.scan_file(path) {
+                            Ok(matches) => acc.0.extend(matches),
+                            Err(e) => {
+                                eprintln!(
+                                    "Warning: skipping unreadable file '{}': {e}",
+                                    path.display()
+                                );
+                                acc.1.push(path.clone());
+                            }
                         }
-                    }
-                    acc
-                })
-                .reduce(Vec::new, |mut left, mut right| {
-                    left.append(&mut right);
-                    left
-                })
+                        acc
+                    },
+                )
+                .reduce(
+                    || (Vec::new(), Vec::new()),
+                    |mut left, mut right| {
+                        left.0.append(&mut right.0);
+                        left.1.append(&mut right.1);
+                        left
+                    },
+                )
         }))
     }
 }
@@ -303,10 +216,10 @@ pub struct ScanOptions {
 ///
 /// This function handles:
 /// 1. Loading the scan patterns from a configuration file.
-/// 2. Setting up the output writer (either a file or `stdout`).
-/// 3. Iterating through the input paths and dispatching to the appropriate
-///    `Scanner` methods (for files or directories).
-/// 4. Writing the results.
+/// 2. Collecting the files to scan from the input paths.
+/// 3. Setting up the output writer (either a file or `stdout`).
+/// 4. Scanning the collected files.
+/// 5. Writing the results.
 pub fn run_scan(options: ScanOptions) -> Result<()> {
     let ScanOptions {
         patterns_file,
@@ -341,38 +254,49 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
     let exts = require_valid_extensions(&extensions)?;
 
     // Load patterns: inline -e flags take precedence over the patterns file.
-    let patterns: Vec<Pattern> = if !inline_patterns.is_empty() {
-        inline_patterns
+    // The file's `exclusions` come with it, so inline patterns have none.
+    let (patterns, exclusions): (Vec<Pattern>, Vec<String>) = if !inline_patterns.is_empty() {
+        let patterns = inline_patterns
             .into_iter()
             .enumerate()
             .map(|(i, pattern)| Pattern {
                 name: format!("inline_{}", i + 1),
                 pattern,
             })
-            .collect()
+            .collect();
+        (patterns, Vec::new())
     } else {
         // The patterns file resolves ONLY as given (absolute, or relative to
         // the current directory): a typo'd path must be an error, never a
         // silent fallback to a same-named file elsewhere (e.g. a stale copy
         // in $XDG_CONFIG_HOME/oober), which for a security scan would be a
         // false all-clear.
-        let loaded = ConfigLoader::load_scan_config(&patterns_file)?.patterns;
+        let loaded = ConfigLoader::load_scan_config(&patterns_file)?;
         // Report on stderr which file is used; stdout carries the results.
         eprintln!("Using patterns file: {}", patterns_file.display());
-        loaded
+        (loaded.patterns, loaded.exclusions)
     };
     let patterns_hash = compute_patterns_hash(&patterns);
 
     // Create scanner
     let scanner = Arc::new(Scanner::new(patterns)?);
 
-    // Prepare output
+    let files = collect_files(
+        &inputs,
+        &exts,
+        hidden,
+        no_ignore,
+        &exclusions,
+        output.as_deref(),
+    )?;
+
+    // Prepare output. Creating the file truncates it, so this comes after the
+    // inputs are collected: a bad input path must not wipe earlier results.
     let mut writer: Box<dyn Write + Send> = match output {
         Some(path) => Box::new(BufWriter::new(File::create(path)?)),
         None => Box::new(BufWriter::new(std::io::stdout())),
     };
 
-    let files = collect_files(&inputs, &exts, hidden, no_ignore)?;
     let project_root = determine_project_root(&inputs)?;
     let mut files_to_scan = files.clone();
     let mut cached_matches: Vec<Match> = Vec::new();
@@ -414,7 +338,18 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
 
             for file in &files {
                 if let Some(file_state) = state.files.get(file) {
-                    let (changed, fingerprint) = fp.check_file(file, file_state)?;
+                    // A file that cannot be checked must not end the scan:
+                    // treat it as changed, so it is scanned like any other.
+                    let (changed, fingerprint) = match fp.check_file(file, file_state) {
+                        Ok(checked) => checked,
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: could not check '{}' for changes: {e}; re-scanning",
+                                file.display()
+                            );
+                            (true, None)
+                        }
+                    };
                     if !changed {
                         // Unchanged: the cached fingerprint is still valid, so
                         // state saving must not read the file again.
@@ -473,7 +408,7 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
         all_matches.extend(cached_matches);
     }
 
-    let scanned_matches = scanner.scan_files_parallel(&files_to_scan, workers)?;
+    let (scanned_matches, failed_files) = scanner.scan_files_parallel(&files_to_scan, workers)?;
     all_matches.extend(scanned_matches);
 
     let formatter = OutputFormatter::new(format, include_summary);
@@ -486,10 +421,11 @@ pub fn run_scan(options: ScanOptions) -> Result<()> {
             &files,
             known_fingerprints,
             &all_matches,
+            &failed_files,
             &fp,
             patterns_hash,
             no_cache_content,
-        )?;
+        );
         manager.save_state(&scan_state)?;
     }
 
@@ -522,16 +458,49 @@ fn collect_files(
     extensions: &HashSet<String>,
     hidden: bool,
     no_ignore: bool,
+    exclusions: &[String],
+    output: Option<&Path>,
 ) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
+    // A file reached twice (named explicitly and found in a directory walk,
+    // or via overlapping directories) must be scanned once: listed twice it
+    // reports every match twice, and an incremental run doubles its cached
+    // matches each time. Paths are deduplicated by canonical form so
+    // different spellings of one file collapse; the first spelling is kept.
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let canonical =
+        |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Canonical form of each walked directory, resolved once per directory.
+    let mut canonical_dirs: HashMap<PathBuf, PathBuf> = HashMap::new();
+
+    // The output file starts out as already seen, so it is never scanned
+    // when it lies inside an input directory: the scan would read its own
+    // results while writing them. Only an output file that already exists
+    // can be among the inputs, since it is created after this collection.
+    if let Some(Ok(output)) = output.map(std::fs::canonicalize) {
+        seen.insert(output);
+    }
 
     for input in inputs {
         if input.is_file() {
-            if should_process_file(input, extensions) {
+            if should_process_file(input, extensions) && seen.insert(canonical(input)) {
                 files.push(input.to_path_buf());
             }
         } else if input.is_dir() {
-            for entry in build_walker(input, hidden, no_ignore).build() {
+            let mut walker = build_walker(input, hidden, no_ignore);
+
+            // Excluded names are matched against the path below this input,
+            // so the directories above it never count, and an excluded
+            // directory is pruned instead of being walked and then filtered.
+            // A file named as an input is never excluded.
+            let root = input.clone();
+            let excludes = exclusions.to_vec();
+            walker.filter_entry(move |entry| {
+                let path = entry.path();
+                !is_excluded(path.strip_prefix(&root).unwrap_or(path), &excludes)
+            });
+
+            for entry in walker.build() {
                 // A single unreadable entry (e.g. a permission-denied
                 // subdirectory) must not kill the whole scan.
                 let entry = match entry {
@@ -543,7 +512,19 @@ fn collect_files(
                 };
                 let path = entry.path();
                 if path.is_file() && should_process_file(path, extensions) {
-                    files.push(path.to_path_buf());
+                    // Resolving every file costs one realpath per file. A
+                    // file that is not a symlink is its canonical directory
+                    // plus its name, so only symlinks are resolved in full.
+                    let key = match (path.parent(), path.file_name()) {
+                        (Some(parent), Some(name)) if !entry.path_is_symlink() => canonical_dirs
+                            .entry(parent.to_path_buf())
+                            .or_insert_with(|| canonical(parent))
+                            .join(name),
+                        _ => canonical(path),
+                    };
+                    if seen.insert(key) {
+                        files.push(path.to_path_buf());
+                    }
                 }
             }
         } else {
@@ -579,23 +560,44 @@ fn compute_patterns_hash(patterns: &[Pattern]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Builds the state to cache for this run.
+///
+/// A file in `failed` could not be scanned and is left out, even when a
+/// fingerprint was carried over for it: saved, it would count as scanned
+/// with no matches and be skipped until its size or modification time
+/// changed. A file that cannot be fingerprinted is left out with a warning
+/// instead of failing the run. Either way the next run scans the file again.
 fn build_scan_state(
     files: &[PathBuf],
     mut known_fingerprints: HashMap<PathBuf, FileFingerprint>,
     matches: &[Match],
+    failed: &[PathBuf],
     fingerprinter: &Fingerprinter,
     patterns_hash: String,
     no_cache_content: bool,
-) -> Result<ScanState> {
+) -> ScanState {
     let now = SystemTime::now();
+    let failed: HashSet<&PathBuf> = failed.iter().collect();
     let mut file_states = HashMap::new();
 
     for file in files {
+        if failed.contains(file) {
+            continue;
+        }
         // Reuse the fingerprint carried over from change detection; only files
         // without one (new files, or size-mismatch short circuits) are read here.
         let fingerprint = match known_fingerprints.remove(file) {
             Some(fingerprint) => fingerprint,
-            None => fingerprinter.fingerprint_file(file)?,
+            None => match fingerprinter.fingerprint_file(file) {
+                Ok(fingerprint) => fingerprint,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: not caching '{}': could not fingerprint it: {e}",
+                        file.display()
+                    );
+                    continue;
+                }
+            },
         };
         file_states.insert(
             file.to_path_buf(),
@@ -609,13 +611,14 @@ fn build_scan_state(
         );
     }
 
-    Ok(ScanState {
+    ScanState {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        format: CACHE_FORMAT,
         last_scan: now,
         files: file_states,
         patterns_hash,
         scan_results: build_scan_results(matches, no_cache_content),
-    })
+    }
 }
 
 fn build_scan_results(
@@ -772,6 +775,26 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// Scans `dir` the way `run_scan` does: `collect_files`, then
+    /// `scan_files_parallel`.
+    fn scan_dir(
+        scanner: &Scanner,
+        dir: &Path,
+        workers: Option<usize>,
+        hidden: bool,
+        no_ignore: bool,
+    ) -> Result<Vec<Match>> {
+        let files = collect_files(
+            &[dir.to_path_buf()],
+            &HashSet::new(),
+            hidden,
+            no_ignore,
+            &[],
+            None,
+        )?;
+        Ok(scanner.scan_files_parallel(&files, workers)?.0)
+    }
+
     #[test]
     fn test_regex_set_matching() {
         let patterns = vec![
@@ -919,9 +942,16 @@ mod tests {
         }];
         let scanner = Scanner::new(patterns).unwrap();
 
-        let sequential = scanner.scan_directory(dir, &[], false, false);
-        let parallel = scanner.scan_directory_parallel(dir, &[], Some(1), false, false);
-        let collected = collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false);
+        let sequential = scan_dir(&scanner, dir, Some(1), false, false);
+        let parallel = scan_dir(&scanner, dir, Some(2), false, false);
+        let collected = collect_files(
+            &[dir.to_path_buf()],
+            &HashSet::new(),
+            false,
+            false,
+            &[],
+            None,
+        );
 
         // Restore permissions before asserting so TempDir cleanup succeeds.
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
@@ -957,8 +987,8 @@ mod tests {
         }])
         .unwrap();
 
-        let sequential = scanner.scan_directory(&scanme, &[], false, false);
-        let parallel = scanner.scan_directory_parallel(&scanme, &[], Some(1), false, false);
+        let sequential = scan_dir(&scanner, &scanme, Some(1), false, false);
+        let parallel = scan_dir(&scanner, &scanme, Some(2), false, false);
 
         // run_scan: the streaming (text) and collected (json) paths must both
         // succeed and report the readable file's match. Output files live
@@ -1023,24 +1053,39 @@ mod tests {
 
         let scanner = aws_key_scanner();
 
-        let default_matches = scanner.scan_directory(dir, &[], false, false).unwrap();
+        let default_matches = scan_dir(&scanner, dir, Some(1), false, false).unwrap();
         assert!(
             default_matches.is_empty(),
             "hidden files must be excluded by default"
         );
 
-        let hidden_matches = scanner.scan_directory(dir, &[], true, false).unwrap();
+        let hidden_matches = scan_dir(&scanner, dir, Some(1), true, false).unwrap();
         assert_eq!(hidden_matches.len(), 1);
         assert_eq!(hidden_matches[0].file_path, dir.join(".env"));
 
-        // collect_files (the run_scan path) must agree with the helpers.
+        // collect_files on its own must agree.
         assert!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
-                .unwrap()
-                .is_empty()
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                false,
+                false,
+                &[],
+                None
+            )
+            .unwrap()
+            .is_empty()
         );
         assert_eq!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), true, false).unwrap(),
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                true,
+                false,
+                &[],
+                None
+            )
+            .unwrap(),
             vec![dir.join(".env")]
         );
     }
@@ -1066,26 +1111,86 @@ mod tests {
 
         let scanner = aws_key_scanner();
 
-        let default_matches = scanner.scan_directory(dir, &[], false, false).unwrap();
+        let default_matches = scan_dir(&scanner, dir, Some(1), false, false).unwrap();
         assert!(
             default_matches.is_empty(),
             "gitignored files must be excluded by default"
         );
 
-        let no_ignore_matches = scanner.scan_directory(dir, &[], false, true).unwrap();
+        let no_ignore_matches = scan_dir(&scanner, dir, Some(1), false, true).unwrap();
         assert_eq!(no_ignore_matches.len(), 1);
         assert_eq!(no_ignore_matches[0].file_path, dir.join("secret.txt"));
 
-        // collect_files (the run_scan path) must agree with the helpers.
+        // collect_files on its own must agree.
         assert!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, false)
-                .unwrap()
-                .is_empty()
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                false,
+                false,
+                &[],
+                None
+            )
+            .unwrap()
+            .is_empty()
         );
         assert_eq!(
-            collect_files(&[dir.to_path_buf()], &HashSet::new(), false, true).unwrap(),
+            collect_files(
+                &[dir.to_path_buf()],
+                &HashSet::new(),
+                false,
+                true,
+                &[],
+                None
+            )
+            .unwrap(),
             vec![dir.join("secret.txt")]
         );
+    }
+
+    #[test]
+    fn test_exclusions_prune_names_below_the_input_root_only() {
+        // The input root is itself named `vendor`: only names below it are
+        // matched, so the root is walked and its `vendor/` child is pruned.
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().join("vendor");
+        fs::create_dir_all(root.join("vendor").join("lib")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("app.txt"), "x\n").unwrap();
+        fs::write(root.join("vendor").join("dep.txt"), "x\n").unwrap();
+        fs::write(root.join("vendor").join("lib").join("deep.txt"), "x\n").unwrap();
+        let exclusions = ["vendor".to_string()];
+        let none = HashSet::new();
+
+        // --hidden and --no-ignore do not bring an excluded directory back.
+        let files = collect_files(
+            std::slice::from_ref(&root),
+            &none,
+            true,
+            true,
+            &exclusions,
+            None,
+        )
+        .unwrap();
+        assert_eq!(files, vec![root.join("src").join("app.txt")]);
+
+        // Without exclusions the same walk reaches all three files.
+        let files =
+            collect_files(std::slice::from_ref(&root), &none, true, true, &[], None).unwrap();
+        assert_eq!(files.len(), 3, "got: {files:?}");
+
+        // A file named as an input is not excluded.
+        let explicit = root.join("vendor").join("dep.txt");
+        let files = collect_files(
+            std::slice::from_ref(&explicit),
+            &none,
+            false,
+            false,
+            &exclusions,
+            None,
+        )
+        .unwrap();
+        assert_eq!(files, vec![explicit]);
     }
 
     #[cfg(unix)]
@@ -1104,13 +1209,14 @@ mod tests {
         let mut carried = HashMap::new();
         carried.insert(file.clone(), fingerprint);
 
-        // Make the file unreadable: fingerprinting it would fail, so a passing
-        // build_scan_state proves the carried fingerprint was reused instead of
-        // the file being read a second time.
+        // Make the file unreadable: fingerprinting it would fail and leave it
+        // out of the state, so finding it there proves the carried fingerprint
+        // was reused instead of the file being read a second time.
         fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
         let state = build_scan_state(
             std::slice::from_ref(&file),
             carried,
+            &[],
             &[],
             &fingerprinter,
             "patterns".to_string(),
@@ -1118,7 +1224,6 @@ mod tests {
         );
         fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
 
-        let state = state.unwrap();
         assert_eq!(state.files[&file].hash, expected_hash);
 
         // A file without a carried fingerprint is still fingerprinted normally.
@@ -1128,14 +1233,54 @@ mod tests {
             std::slice::from_ref(&fresh),
             HashMap::new(),
             &[],
+            &[],
             &fingerprinter,
             "patterns".to_string(),
             false,
-        )
-        .unwrap();
+        );
         assert_eq!(
             state.files[&fresh].hash,
             fingerprinter.fingerprint_file(&fresh).unwrap().hash
+        );
+    }
+
+    #[test]
+    fn test_build_scan_state_leaves_out_failed_and_unfingerprintable_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let ok = temp_dir.path().join("ok.txt");
+        fs::write(&ok, "scanned").unwrap();
+        // Reported as failed by the scan, with a fingerprint carried over
+        // from change detection: the failure must win.
+        let failed = temp_dir.path().join("failed.txt");
+        fs::write(&failed, "never read").unwrap();
+        // Gone by the time the state is built: fingerprinting it fails.
+        let missing = temp_dir.path().join("missing.txt");
+
+        let fingerprinter = Fingerprinter::new(false);
+        let mut carried = HashMap::new();
+        carried.insert(
+            failed.clone(),
+            fingerprinter.fingerprint_file(&failed).unwrap(),
+        );
+
+        let state = build_scan_state(
+            &[ok.clone(), failed.clone(), missing.clone()],
+            carried,
+            &[],
+            std::slice::from_ref(&failed),
+            &fingerprinter,
+            "patterns".to_string(),
+            false,
+        );
+
+        assert!(state.files.contains_key(&ok));
+        assert!(
+            !state.files.contains_key(&failed),
+            "a file that failed to scan must not be cached as scanned"
+        );
+        assert!(
+            !state.files.contains_key(&missing),
+            "a file that cannot be fingerprinted must be left out, not abort"
         );
     }
 
@@ -1278,16 +1423,12 @@ mod tests {
 
         let scanner = Scanner::new(patterns).unwrap();
 
-        // Sequential scan
-        let mut seq_results = scanner
-            .scan_directory(temp_dir.path(), &[], false, false)
-            .unwrap();
+        // Sequential scan (a single worker)
+        let mut seq_results = scan_dir(&scanner, temp_dir.path(), Some(1), false, false).unwrap();
         seq_results.sort_by_key(|m| m.file_path.clone());
 
-        // Parallel scan
-        let mut par_results = scanner
-            .scan_directory_parallel(temp_dir.path(), &[], None, false, false)
-            .unwrap();
+        // Parallel scan (the default worker count)
+        let mut par_results = scan_dir(&scanner, temp_dir.path(), None, false, false).unwrap();
         par_results.sort_by_key(|m| m.file_path.clone());
 
         // Results should be identical (after sorting)

@@ -462,6 +462,8 @@ impl OutputFormatter {
     fn get_severity(&self, pattern_name: &str) -> String {
         // Map pattern names to severity levels
         // This could be configurable
+        // The keywords are matched in any case: `AWS_KEY` is a key too.
+        let pattern_name = pattern_name.to_lowercase();
         if pattern_name.contains("secret") || pattern_name.contains("key") {
             "High".to_string()
         } else if pattern_name.contains("todo") || pattern_name.contains("fixme") {
@@ -687,6 +689,41 @@ mod tests {
             results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
             "config.toml"
         );
+    }
+
+    #[test]
+    fn test_severity_ignores_pattern_name_case() {
+        // The keyword checks were case-sensitive, so an upper-case pattern
+        // name always fell through to Medium.
+        let matches = vec![
+            Match {
+                pattern_name: "AWS_KEY".to_string(),
+                file_path: PathBuf::from("config.toml"),
+                line_number: 1,
+                line_content: "key = AKIAABCDEFGHIJKLMNOP".to_string(),
+            },
+            Match {
+                pattern_name: "TODO".to_string(),
+                file_path: PathBuf::from("src/main.rs"),
+                line_number: 2,
+                line_content: "// TODO later".to_string(),
+            },
+        ];
+
+        let json = OutputFormatter::new(OutputFormat::Json, false)
+            .format_json(&matches)
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(json["matches"][0]["severity"], "High");
+        assert_eq!(json["matches"][1]["severity"], "Low");
+
+        let sarif = OutputFormatter::new(OutputFormat::Sarif, false)
+            .format_sarif(&matches)
+            .unwrap();
+        let sarif: serde_json::Value = serde_json::from_str(&sarif).unwrap();
+        let results = sarif["runs"][0]["results"].as_array().unwrap();
+        assert_eq!(results[0]["level"], "error");
+        assert_eq!(results[1]["level"], "note");
     }
 
     #[test]

@@ -22,12 +22,12 @@ Designed for large codebases with:
   • Parallel file processing
   • Automatic backup creation
   • Gitignore awareness
-  • Smart empty line cleanup
+  • Block removal that leaves distant blank lines alone
 
 QUICK EXAMPLES:
   ob scan .                           # Scan current dir using ./patterns.yaml
   ob scan -e 'TODO|FIXME' .           # Scan with an inline regex (no YAML file)
-  ob replace . --preset clean-debug   # Remove all debug code
+  ob replace . --preset clean-debug   # Remove debug code
   ob rename -d . -p 'test_(.*)' -r 'spec_$1'  # Rename test files
   ob undo -d .                        # Restore from backups
 
@@ -43,9 +43,9 @@ pub struct Args {
 pub enum Preset {
     /// Remove copyright headers and license blocks.
     RemoveCopyright,
-    /// Clean up debug code (e.g., `console.log`, `print` statements).
+    /// Comment out whole-line debug statements (`console.log`, `debugger`, `print(...)  # DEBUG`) and remove DEBUG START/END blocks.
     CleanDebug,
-    /// Remove `TODO` and `FIXME` comments.
+    /// Remove `TODO`, `FIXME`, `HACK` and `XXX` comments (`//` and `#` style), keeping the code before them.
     RemoveTodos,
     /// Clean up trailing whitespace from lines.
     TrimWhitespace,
@@ -81,6 +81,11 @@ pub enum Commands {
     ///       pattern: 'AKIA[0-9A-Z]{16}'
     ///     - name: todo
     ///       pattern: 'TODO|FIXME|HACK'
+    ///   exclusions: [node_modules, vendor]   # optional
+    ///
+    /// `exclusions` lists names to skip, matched below each input directory;
+    /// a file named as an input is never excluded. It has no effect with -e,
+    /// which loads no patterns file. An unknown key in the file is an error.
     Scan {
         /// Path to the YAML file defining the scan patterns.
         #[arg(short, long, default_value = "patterns.yaml")]
@@ -92,6 +97,7 @@ pub enum Commands {
         regex: Vec<String>,
 
         /// Path to the output file. If omitted, results are written to standard output.
+        /// The output file is never scanned itself, even inside a scanned directory.
         #[arg(short, long)]
         output: Option<PathBuf>,
 
@@ -154,7 +160,7 @@ pub enum Commands {
     /// Replace patterns in files (with automatic backups)
     ///
     /// EXAMPLES:
-    ///   ob replace . --preset clean-debug          # Remove all debug code
+    ///   ob replace . --preset clean-debug          # Remove debug code
     ///   ob replace . -p 'TODO' -r 'TODO'           # Simple replacement
     ///   ob replace src/ lib/ -c config.yaml --dry-run  # Preview changes
     ///   ob replace main.py --preset remove-todos   # Process a single file
@@ -166,15 +172,28 @@ pub enum Commands {
     ///   blocks:
     ///     - start: '/* DEBUG START */'
     ///       end: '/* DEBUG END */'
+    /// An unknown key in the config file is an error.
     ///
     /// Patterns are matched against the whole file content, not line-by-line:
     /// use (?m) for per-line ^/$ anchors (e.g. '(?m)[ \t]+$').
+    ///
+    /// Replacements can reference capture groups: $1 or ${1}, and ${name} for
+    /// named groups. Use the ${1} form when a letter, digit or underscore
+    /// follows the reference: '$1_x' refers to a group named '1_x'. Write $$
+    /// for a literal dollar sign. A reference to a group the pattern does not
+    /// define is an error.
+    ///
+    /// Symbolic links to files are never processed: each one is reported on
+    /// stderr and left as a link. The file it points to is edited only when
+    /// that file is itself among the inputs. A directory given as an input
+    /// through a symlink is still walked.
     ///
     /// Available presets: remove-copyright, clean-debug, remove-todos, trim-whitespace,
     /// remove-empty-comments, tabs-to-spaces, spaces-to-tabs
     Replace {
         /// The name of a built-in preset to use for replacement.
-        #[arg(long, value_enum)]
+        /// Cannot be combined with -c/--config or -p/--pattern.
+        #[arg(long, value_enum, conflicts_with_all = ["config", "pattern"])]
         preset: Option<Preset>,
 
         /// List the available presets with their descriptions, then exit.
@@ -182,15 +201,19 @@ pub enum Commands {
         list_presets: bool,
 
         /// Path to a YAML configuration file for replacement rules.
-        #[arg(short, long)]
+        /// The file itself is never processed, even inside an input directory.
+        /// Cannot be combined with --preset or -p/--pattern.
+        #[arg(short, long, conflicts_with = "pattern")]
         config: Option<PathBuf>,
 
-        /// A single regex pattern to search for.
-        #[arg(short, long)]
+        /// A single regex pattern to search for. Requires -r/--replacement.
+        /// Cannot be combined with --preset or -c/--config.
+        #[arg(short, long, requires = "replacement")]
         pattern: Option<String>,
 
-        /// The string to replace the matched pattern with.
-        #[arg(short, long)]
+        /// The string to replace the matched pattern with. Requires -p/--pattern.
+        /// Can include capture groups (e.g., `$1` or `${1}`); `$$` is a literal dollar sign.
+        #[arg(short, long, requires = "pattern")]
         replacement: Option<String>,
 
         /// The directory to process (legacy alias for a positional input).
@@ -201,7 +224,8 @@ pub enum Commands {
         #[arg(short = 'x', long = "ext", value_delimiter = ',')]
         extensions: Vec<String>,
 
-        /// A comma-separated list of directories to exclude.
+        /// A comma-separated list of directory names to exclude, matched
+        /// below each input directory (not against the input's own path).
         #[arg(short = 'e', long = "exclude", value_delimiter = ',')]
         exclude: Vec<String>,
 
@@ -228,9 +252,14 @@ pub enum Commands {
 
     /// Restore files from backups (undo replacements)
     ///
+    /// Only the .bak files that `replace` recorded creating are restored;
+    /// any other .bak file in the tree is left alone and counted.
+    ///
     /// EXAMPLES:
-    ///   ob undo -d .                    # Restore all files in current dir
+    ///   ob undo -d .                    # Restore files from oober's backups
+    ///   ob undo -d . --dry-run          # Preview what would be restored
     ///   ob undo -d src/ --keep-backups  # Restore but keep .bak files
+    ///   ob undo -d . --all-bak          # Also restore .bak files oober did not record
     Undo {
         /// The directory where the `replace` operation was run.
         #[arg(short, long, required = true)]
@@ -239,13 +268,26 @@ pub enum Commands {
         /// Keep the backup files after restoring the original files.
         #[arg(long)]
         keep_backups: bool,
+
+        /// Also restore .bak files oober has no record of creating (backups
+        /// made by 0.1.1, or made before the cache directory was wiped).
+        #[arg(long)]
+        all_bak: bool,
+
+        /// Preview which files would be restored without changing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Remove backup files without restoring
     ///
+    /// Only the .bak files that `replace` recorded creating are removed;
+    /// any other .bak file in the tree is left alone and counted.
+    ///
     /// EXAMPLES:
     ///   ob clean-backups -d . --dry-run  # Preview what would be deleted
-    ///   ob clean-backups -d .            # Delete all .bak files
+    ///   ob clean-backups -d .            # Delete oober's .bak files
+    ///   ob clean-backups -d . --all-bak  # Also delete .bak files oober did not record
     CleanBackups {
         /// The directory to clean of backup files.
         #[arg(short, long, required = true)]
@@ -254,6 +296,11 @@ pub enum Commands {
         /// Preview which backup files would be removed without deleting them.
         #[arg(long)]
         dry_run: bool,
+
+        /// Also remove .bak files oober has no record of creating (backups
+        /// made by 0.1.1, or made before the cache directory was wiped).
+        #[arg(long)]
+        all_bak: bool,
     },
 
     /// Batch rename files using regex patterns
@@ -261,9 +308,13 @@ pub enum Commands {
     /// EXAMPLES:
     ///   ob rename -d . -p 'test_(.*)' -r 'spec_$1'      # test_*.js -> spec_*.js
     ///   ob rename -d . -p '\\.tsx$' -r '.jsx' --dry-run  # Preview .tsx -> .jsx
-    ///   ob rename -d . -p '(\\d+)_(.*)' -r '$2_$1'      # Reorder name parts
+    ///   ob rename -d . -p '^(\d+)_(.+?)(\.[^.]+)?$' -r '${2}_${1}${3}'  # 12_intro.md -> intro_12.md
     ///
-    /// Supports regex capture groups: $1, $2, etc.
+    /// The replacement can reference capture groups: $1 or ${1}, and ${name}
+    /// for named groups. Use the ${1} form when a letter, digit or underscore
+    /// follows the reference: '$1_x' refers to a group named '1_x'. Write $$
+    /// for a literal dollar sign. A reference to a group the pattern does not
+    /// define is an error.
     Rename {
         /// The directory containing files to rename.
         #[arg(short, long, required = true)]
@@ -273,7 +324,8 @@ pub enum Commands {
         #[arg(short, long, required = true)]
         pattern: String,
 
-        /// The replacement string. Can include capture groups from the pattern (e.g., `$1`).
+        /// The replacement string. Can include capture groups from the pattern
+        /// (e.g., `$1` or `${1}`); `$$` is a literal dollar sign.
         #[arg(short, long, required = true)]
         replacement: String,
 
@@ -427,6 +479,56 @@ mod tests {
             };
             assert_eq!(inputs.len(), positionals, "{argv:?} positional inputs");
             assert_eq!(dir.is_some(), has_dir, "{argv:?} legacy -d");
+        }
+    }
+
+    #[test]
+    fn test_replace_pattern_and_replacement_require_each_other() {
+        use clap::error::ErrorKind;
+
+        // -p alone used to become a null replacement, which deletes the line
+        // after each match.
+        for argv in [
+            &["ob", "replace", ".", "-p", "TODO"][..],
+            &["ob", "replace", ".", "-r", "DONE"],
+        ] {
+            let err = Args::try_parse_from(argv).expect_err("must be a usage error");
+            assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument, "{argv:?}");
+        }
+        assert!(Args::try_parse_from(["ob", "replace", ".", "-p", "TODO", "-r", "DONE"]).is_ok());
+    }
+
+    #[test]
+    fn test_replace_rule_sources_are_mutually_exclusive() {
+        use clap::error::ErrorKind;
+
+        // These used to be silently prioritized: preset over config over
+        // pattern.
+        for argv in [
+            &[
+                "ob",
+                "replace",
+                ".",
+                "--preset",
+                "clean-debug",
+                "-c",
+                "c.yaml",
+            ][..],
+            &[
+                "ob",
+                "replace",
+                ".",
+                "--preset",
+                "clean-debug",
+                "-p",
+                "A",
+                "-r",
+                "B",
+            ],
+            &["ob", "replace", ".", "-c", "c.yaml", "-p", "A", "-r", "B"],
+        ] {
+            let err = Args::try_parse_from(argv).expect_err("must be a usage error");
+            assert_eq!(err.kind(), ErrorKind::ArgumentConflict, "{argv:?}");
         }
     }
 

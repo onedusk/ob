@@ -1,6 +1,0 @@
-patterns:
-
-replacements:
-  - ""
-
-extensions: [js, ts, py, rb, html, css, md, txt, json, yaml, yml]

@@ -1,5 +1,5 @@
 use crate::errors::{Error, Result};
-use crate::util::is_backup_file;
+use crate::util::{is_backup_file, validate_replacement};
 use ignore::WalkBuilder;
 use regex::Regex;
 use std::collections::HashSet;
@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 ///
 /// This function walks the specified directory, identifies files matching the
 /// provided regex pattern, and renames them using the replacement string.
-/// Every target is planned up front, then the renames execute serially in two
-/// phases (see [`execute_plan`]) so chains, swaps, and case-only renames
-/// succeed and a colliding target never destroys data.
+/// Every target is planned up front, then the renames execute serially (see
+/// [`execute_plan`]): directly where the target name is free, through a
+/// temporary name where it is occupied, so chains, swaps, and case-only
+/// renames succeed and a colliding target never destroys data.
 ///
 /// # Arguments
 ///
@@ -32,6 +33,9 @@ pub fn run_rename(
 ) -> Result<()> {
     let _ = workers;
     let regex = Regex::new(&pattern)?;
+    // A reference to a group the pattern does not define expands to nothing;
+    // reject it before any file is renamed.
+    validate_replacement(&regex, &replacement)?;
     let replacer = FileRenamer::new(regex, replacement);
 
     let mut all_files = Vec::new();
@@ -115,12 +119,16 @@ pub fn run_rename(
     Ok(())
 }
 
-/// Executes the planned renames serially in two phases.
+/// Executes the planned renames serially: the direct ones first, then the
+/// staged ones in two phases (see [`split_plan`] for the split).
 ///
-/// Phase A renames every planned source to a unique temporary name in its own
-/// directory, freeing all source names at once. Phase B renames each
-/// temporary file to its final target; because every planned source has
-/// already been moved away, a target that still exists at that point is a
+/// A rename whose target name is free runs directly, source to target, so an
+/// interrupted run leaves that file under either its old or its new name.
+/// Only the renames whose target is occupied are staged. Phase A renames each
+/// staged source to a unique temporary name in its own directory, freeing
+/// those source names at once. Phase B renames each temporary file to its
+/// final target; because every other planned source has been renamed or
+/// moved aside by then, a target that still exists at that point is a
 /// genuine external occupant (or a case-variant duplicate on a
 /// case-insensitive filesystem), so the rename is refused and the file is
 /// restored to its original name.
@@ -136,12 +144,29 @@ fn execute_plan(
     errors: &mut usize,
     log_changes: bool,
 ) {
-    // Phase A: move each source out of the way.
-    let mut staged: Vec<(&Path, &Path, PathBuf)> = Vec::new();
-    for (index, (path, new_path)) in planned.iter().enumerate() {
-        let temp = temp_path(path, index);
-        match fs::rename(path, &temp) {
-            Ok(()) => staged.push((path.as_path(), new_path.as_path(), temp)),
+    let (direct, to_stage) = split_plan(planned, |target| target.symlink_metadata().is_ok());
+
+    // Direct renames. The target was free when the plan was split; it is
+    // checked again immediately before the rename, because fs::rename
+    // overwrites and an earlier direct rename may have taken the name (a
+    // case-variant duplicate on a case-insensitive filesystem).
+    for (path, new_path) in direct {
+        if new_path.symlink_metadata().is_ok() {
+            eprintln!(
+                "Error renaming file {}: {}",
+                path.display(),
+                Error::RenameCollision(new_path.to_path_buf())
+            );
+            *errors += 1;
+            continue;
+        }
+        match fs::rename(path, new_path) {
+            Ok(()) => {
+                *renamed += 1;
+                if log_changes {
+                    println!("Renamed: {} -> {}", path.display(), new_path.display());
+                }
+            }
             Err(e) => {
                 eprintln!("Error renaming file {}: {}", path.display(), Error::Io(e));
                 *errors += 1;
@@ -149,9 +174,23 @@ fn execute_plan(
         }
     }
 
-    // Phase B: move each temporary file to its final target. Every planned
-    // source was moved away in phase A, so a target that exists here is an
-    // external occupant or a case-variant duplicate — never the source itself.
+    // Phase A: move each staged source out of the way.
+    let mut staged: Vec<(&Path, &Path, PathBuf)> = Vec::new();
+    for (index, (path, new_path)) in to_stage.into_iter().enumerate() {
+        let temp = temp_path(path, index);
+        match fs::rename(path, &temp) {
+            Ok(()) => staged.push((path, new_path, temp)),
+            Err(e) => {
+                eprintln!("Error renaming file {}: {}", path.display(), Error::Io(e));
+                *errors += 1;
+            }
+        }
+    }
+
+    // Phase B: move each temporary file to its final target. Every other
+    // planned source was renamed directly or moved away in phase A, so a
+    // target that exists here is an external occupant or a case-variant
+    // duplicate, never the source itself.
     for (path, new_path, temp) in &staged {
         if new_path.exists() {
             eprintln!(
@@ -177,6 +216,27 @@ fn execute_plan(
             }
         }
     }
+}
+
+/// One planned rename, as `(source, target)`.
+type Rename<'a> = (&'a Path, &'a Path);
+
+/// Splits a plan into the renames that can run directly and the ones that
+/// must be staged through a temporary name, as `(direct, staged)`.
+///
+/// An entry is staged when `target_exists` reports its target name as
+/// occupied: by another planned source (a chain or a swap), by the source
+/// itself on a case-insensitive filesystem (a case-only rename), or by a
+/// file outside the plan. Every other entry is direct. The filesystem is
+/// reached only through `target_exists`.
+fn split_plan<'a>(
+    planned: &'a [(&PathBuf, PathBuf)],
+    target_exists: impl Fn(&Path) -> bool,
+) -> (Vec<Rename<'a>>, Vec<Rename<'a>>) {
+    planned
+        .iter()
+        .map(|(path, new_path)| (path.as_path(), new_path.as_path()))
+        .partition(|(_, new_path)| !target_exists(new_path))
 }
 
 /// Builds a temporary staging name in the file's own directory, avoiding any
@@ -290,6 +350,70 @@ mod tests {
         names
     }
 
+    /// Splits a plan of `(source, target)` names against the names that
+    /// exist, returning the direct and the staged source names. No
+    /// filesystem is touched.
+    fn split_names(plan: &[(&str, &str)], existing: &[&str]) -> (Vec<String>, Vec<String>) {
+        let sources: Vec<PathBuf> = plan.iter().map(|(source, _)| source.into()).collect();
+        let planned: Vec<(&PathBuf, PathBuf)> = sources
+            .iter()
+            .zip(plan)
+            .map(|(source, (_, target))| (source, PathBuf::from(target)))
+            .collect();
+        let existing: HashSet<&Path> = existing.iter().map(Path::new).collect();
+        let (direct, staged) = split_plan(&planned, |target| existing.contains(target));
+        let names = |entries: Vec<Rename>| {
+            entries
+                .iter()
+                .map(|(source, _)| source.display().to_string())
+                .collect()
+        };
+        (names(direct), names(staged))
+    }
+
+    #[test]
+    fn test_split_plan_stages_nothing_when_every_target_is_free() {
+        // No target is occupied, so no file needs to pass through a
+        // temporary name: an interrupt can then only stop the run between
+        // two complete renames, never with a file under a temp name.
+        let (direct, staged) = split_names(
+            &[("file_1.txt", "doc_1.txt"), ("file_2.txt", "doc_2.txt")],
+            &["file_1.txt", "file_2.txt"],
+        );
+        assert_eq!(direct, ["file_1.txt", "file_2.txt"]);
+        assert!(staged.is_empty(), "got: {staged:?}");
+    }
+
+    #[test]
+    fn test_split_plan_stages_entries_whose_target_exists() {
+        // Chain: a.txt -> ab.txt while ab.txt -> abb.txt. Only the entry
+        // whose target is still occupied is staged; the tail of the chain
+        // has a free target and runs directly, which frees ab.txt.
+        let (direct, staged) = split_names(
+            &[("a.txt", "ab.txt"), ("ab.txt", "abb.txt")],
+            &["a.txt", "ab.txt"],
+        );
+        assert_eq!(direct, ["ab.txt"]);
+        assert_eq!(staged, ["a.txt"]);
+
+        // Swap: each target is the other entry's source, so both are staged.
+        let (direct, staged) = split_names(
+            &[("ab.txt", "ba.txt"), ("ba.txt", "ab.txt")],
+            &["ab.txt", "ba.txt"],
+        );
+        assert!(direct.is_empty(), "got: {direct:?}");
+        assert_eq!(staged, ["ab.txt", "ba.txt"]);
+
+        // A target held by a file outside the plan is staged too, next to a
+        // direct entry; the staged path then refuses it and restores it.
+        let (direct, staged) = split_names(
+            &[("file_1.txt", "merged.txt"), ("file_2.txt", "other.txt")],
+            &["file_1.txt", "file_2.txt", "merged.txt"],
+        );
+        assert_eq!(direct, ["file_2.txt"]);
+        assert_eq!(staged, ["file_1.txt"]);
+    }
+
     #[test]
     fn test_collision_with_existing_target_is_skipped() {
         // merged.txt never matches the pattern, so it is a genuine external
@@ -387,6 +511,26 @@ mod tests {
         ];
         contents.sort();
         assert_eq!(contents, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn test_run_rename_rejects_undefined_group_reference_and_renames_nothing() {
+        // `$2_` names a group called `2_`, which expands to nothing: the
+        // file used to be renamed to `01`.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("01_intro.md"), "intro").unwrap();
+
+        let result = run_rename(
+            dir.to_path_buf(),
+            r"(\d+)_(.*)".to_string(),
+            "$2_$1".to_string(),
+            false, // dry_run
+            false, // verbose
+            Some(1),
+        );
+        assert!(matches!(result, Err(Error::Config(_))));
+        assert_eq!(dir_names(dir), ["01_intro.md"]);
     }
 
     #[test]

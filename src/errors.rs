@@ -58,6 +58,39 @@ pub enum Error {
     /// A replace run that finished with per-file errors.
     #[error("replace finished with {0} file(s) failed")]
     ReplaceFailed(usize),
+
+    /// A file `replace` refuses to change: a regular file it cannot treat as
+    /// this file's backup already sits at the `.bak` path.
+    #[error(
+        "backup {0} already exists and oober cannot tell that it still matches this file, so the file was left unchanged; run `ob undo` to restore the backup or `ob clean-backups` to remove it (add --all-bak if oober did not create it), or pass --no-backup"
+    )]
+    BackupExists(PathBuf),
+
+    /// A file `replace` refuses to change: a directory or a symlink sits at
+    /// the `.bak` path. Neither `undo` nor `clean-backups` lists a directory
+    /// or a dangling symlink, and `undo` restores only from a regular file,
+    /// so the message must not send the user there.
+    #[error(
+        "the backup path {0} is taken by something that is not a regular file (a directory or a symlink), so the file was left unchanged; move it or remove it yourself, or pass --no-backup"
+    )]
+    BackupPathTaken(PathBuf),
+
+    /// A replace run stopped before changing any file: the records of the
+    /// backups it would create cannot be written.
+    #[error(
+        "backup records cannot be written to {0} ({1}), so no file was changed; make that directory writable, point XDG_CACHE_HOME at a directory that is, or pass --no-backup"
+    )]
+    BackupRecordsDir(PathBuf, String),
+
+    /// A file that was modified, but whose backup could not be recorded.
+    #[error(
+        "the file was modified, but its backup {0} could not be recorded ({1}); `ob undo` restores it only with --all-bak"
+    )]
+    BackupRecord(PathBuf, String),
+
+    /// An undo run that finished with per-file errors.
+    #[error("undo finished with {0} file(s) failed")]
+    UndoFailed(usize),
 }
 
 /// A convenient type alias for `Result<T, oober::errors::Error>`.

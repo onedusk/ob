@@ -9,10 +9,29 @@ use assert_cmd::Command;
 use predicates::str::contains;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 use tempfile::TempDir;
 
+/// A per-process directory standing in for the user's cache and config
+/// dirs. It lives under the cargo target dir and is never dropped, so it
+/// stays valid for every test in this process.
+fn isolated_xdg_home() -> &'static Path {
+    static XDG_HOME: OnceLock<TempDir> = OnceLock::new();
+    XDG_HOME
+        .get_or_init(|| {
+            TempDir::new_in(env!("CARGO_TARGET_TMPDIR")).expect("temp dir must be creatable")
+        })
+        .path()
+}
+
+/// The `oober` binary with `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` pointed at
+/// a temp dir, so no test can read or write the real user cache or config
+/// dir. A test that sets its own values afterwards keeps them.
 fn ob() -> Command {
-    Command::cargo_bin("oober").expect("oober binary must build")
+    let mut cmd = Command::cargo_bin("oober").expect("oober binary must build");
+    cmd.env("XDG_CACHE_HOME", isolated_xdg_home().join("cache"))
+        .env("XDG_CONFIG_HOME", isolated_xdg_home().join("config"));
+    cmd
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +295,38 @@ fn incremental_scan_with_empty_xdg_cache_home_does_not_cache_in_project() {
     );
 }
 
+#[test]
+fn ob_helper_keeps_the_scan_cache_out_of_the_user_cache_dir() {
+    // Without the helper's XDG defaults an incremental scan writes into the
+    // platform cache dir under HOME, i.e. the real user cache on a dev
+    // machine.
+    let temp = TempDir::new().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("src.txt"), "hello TODO world\n").unwrap();
+
+    ob().env("HOME", &home)
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("--incremental")
+        .arg(&work)
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_dir(&home).unwrap().count(),
+        0,
+        "the scan cache must not land under HOME"
+    );
+    assert!(
+        isolated_xdg_home().join("cache").join("oober").is_dir(),
+        "the scan cache must land in the helper's temp dir"
+    );
+}
+
 /// Returns the contents of the single per-project cache file under
 /// `<cache>/oober/`.
 fn read_cache_file(cache: &Path) -> String {
@@ -426,6 +477,448 @@ fn no_cache_content_without_incremental_is_rejected() {
         .stderr(contains("--incremental"));
 }
 
+/// Makes `path` unreadable (mode 000). Returns false, with the mode put
+/// back, when the file can still be opened: the tests run as root, where
+/// the mode does not block reads.
+#[cfg(unix)]
+fn make_unreadable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::File::open(path).is_ok() {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
+        return false;
+    }
+    true
+}
+
+#[cfg(unix)]
+#[test]
+fn incremental_scan_does_not_cache_a_file_it_could_not_read() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // A file that failed to scan was saved in the cache as scanned with no
+    // matches. Making it readable changes neither its size nor its
+    // modification time, so every later run skipped it: a false all-clear.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("ok.txt"), "hello TODO world\n").unwrap();
+    let locked = work.join("locked.txt");
+    fs::write(&locked, "TODO locked\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    let scan = || {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("--incremental")
+            .arg(&work);
+        cmd
+    };
+
+    let first = scan().assert();
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    first
+        .success()
+        .stdout(contains("ok.txt"))
+        .stderr(contains("locked.txt"));
+
+    // The file is readable now and was never scanned: it must be scanned.
+    scan().assert().success().stdout(contains("TODO locked"));
+}
+
+#[cfg(unix)]
+#[test]
+fn incremental_content_hash_scan_survives_an_unreadable_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // With --content-hash, saving the cache hashed every file again, so one
+    // unreadable file failed the whole run after the results were written.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("ok.txt"), "hello TODO world\n").unwrap();
+    let locked = work.join("locked.txt");
+    fs::write(&locked, "TODO locked\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    let assert = ob()
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("--incremental")
+        .arg("--content-hash")
+        .arg(&work)
+        .assert();
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    assert
+        .success()
+        .stdout(contains("ok.txt"))
+        .stderr(contains("locked.txt"));
+
+    let cached = read_cache_file(&cache);
+    assert!(
+        cached.contains("ok.txt"),
+        "the cache must still be saved for the readable file: {cached}"
+    );
+    assert!(
+        !cached.contains("locked.txt"),
+        "the unreadable file must stay out of the cache: {cached}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn incremental_scan_survives_a_cached_file_that_became_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Change detection hashes a cached file under --content-hash. When that
+    // failed, the error ended the whole scan before any file was scanned.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("ok.txt"), "hello TODO world\n").unwrap();
+    let locked = work.join("locked.txt");
+    fs::write(&locked, "TODO locked\n").unwrap();
+
+    let scan = || {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("--incremental")
+            .arg("--content-hash")
+            .arg(&work);
+        cmd
+    };
+
+    // Prime the cache while both files are readable.
+    scan().assert().success().stdout(contains("TODO locked"));
+
+    if !make_unreadable(&locked) {
+        return;
+    }
+    let second = scan().assert();
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o644)).unwrap();
+    second
+        .success()
+        .stdout(contains("ok.txt"))
+        .stderr(contains("locked.txt"));
+
+    // The file was not scanned on the second run, so it must not be cached
+    // as unchanged: readable again, it is scanned and its match is back.
+    scan().assert().success().stdout(contains("TODO locked"));
+}
+
+#[test]
+fn scan_overlapping_inputs_report_each_match_once() {
+    // `.` and `sub` reach the same file under two spellings (`./sub/a.txt`
+    // and `sub/a.txt`); every match was printed once per spelling.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir_all(work.join("sub")).unwrap();
+    fs::write(work.join("sub").join("a.txt"), "hello TODO world\n").unwrap();
+
+    let assert = ob()
+        .current_dir(&work)
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg(".")
+        .arg("sub")
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "the match must be reported once: {stdout}"
+    );
+    assert!(
+        stdout.contains("./sub/a.txt:1"),
+        "the first spelling of the path must be kept: {stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_reports_a_file_and_a_symlink_to_it_once() {
+    // A symlink and its target are one file. Which of the two spellings is
+    // kept depends on the walk order, so only the count is asserted.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("a.txt"), "hello TODO world\n").unwrap();
+    std::os::unix::fs::symlink("a.txt", work.join("link.txt")).unwrap();
+
+    let assert = ob()
+        .arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg(&work)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        stdout.lines().count(),
+        1,
+        "the match must be reported once: {stdout}"
+    );
+}
+
+#[test]
+fn incremental_scan_overlapping_inputs_do_not_multiply_cached_matches() {
+    // A file named explicitly and found again in an input directory was
+    // listed twice, so each run read its cached matches twice and saved the
+    // doubled list: the match count doubled on every run.
+    let temp = TempDir::new().unwrap();
+    let cache = temp.path().join("cache");
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    let file = work.join("a.txt");
+    fs::write(&file, "hello TODO world\n").unwrap();
+
+    for run in 1..=3 {
+        let assert = ob()
+            .env("XDG_CACHE_HOME", &cache)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("--incremental")
+            .arg(&work)
+            .arg(&file)
+            .assert()
+            .success();
+
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        assert_eq!(
+            stdout.lines().count(),
+            1,
+            "run {run} must report the match once: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn scan_keeps_the_existing_output_file_when_an_input_is_missing() {
+    // The output file was created, and so truncated, before the inputs were
+    // collected: a typo in an input path wiped the previous results.
+    let temp = TempDir::new().unwrap();
+    let out = temp.path().join("results.txt");
+    fs::write(&out, "previous results\n").unwrap();
+
+    ob().arg("scan")
+        .arg("-e")
+        .arg("TODO")
+        .arg("-o")
+        .arg(&out)
+        .arg(temp.path().join("no_such_dir"))
+        .assert()
+        .failure()
+        .stderr(contains("Input path not found"));
+
+    assert_eq!(fs::read_to_string(&out).unwrap(), "previous results\n");
+}
+
+/// Fills `dir` with enough matching lines that the scan output is far
+/// larger than the output writer's buffer, so results reach the output file
+/// while the scan is still running.
+fn write_many_todo_files(dir: &Path) {
+    for i in 0..40 {
+        let content: String = (0..200).map(|n| format!("TODO item {n}\n")).collect();
+        fs::write(dir.join(format!("f{i}.txt")), content).unwrap();
+    }
+}
+
+#[test]
+fn scan_never_scans_its_own_output_file() {
+    // With the output file inside the scanned directory, the scan read its
+    // own results while writing them, and reported them as matches.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    write_many_todo_files(&work);
+    let out = work.join("results.txt");
+
+    // The second run starts with the first run's results in place.
+    for run in 1..=2 {
+        ob().arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("-w")
+            .arg("1")
+            .arg("-o")
+            .arg(&out)
+            .arg(&work)
+            .timeout(std::time::Duration::from_secs(60))
+            .assert()
+            .success();
+
+        let results = fs::read_to_string(&out).unwrap();
+        assert_eq!(
+            results.lines().count(),
+            40 * 200,
+            "run {run} must report exactly the matches of the scanned files"
+        );
+        assert!(
+            !results.contains("results.txt"),
+            "run {run} must not report the output file"
+        );
+    }
+}
+
+#[test]
+fn scan_never_scans_its_own_output_file_given_as_a_relative_path() {
+    // `-o results.txt` has no directory part; the output file must still be
+    // recognized among the files found under `.`.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    write_many_todo_files(&work);
+
+    for run in 1..=2 {
+        ob().current_dir(&work)
+            .arg("scan")
+            .arg("-e")
+            .arg("TODO")
+            .arg("-w")
+            .arg("1")
+            .arg("-o")
+            .arg("results.txt")
+            .arg(".")
+            .timeout(std::time::Duration::from_secs(60))
+            .assert()
+            .success();
+
+        let results = fs::read_to_string(work.join("results.txt")).unwrap();
+        assert_eq!(
+            results.lines().count(),
+            40 * 200,
+            "run {run} must report exactly the matches of the scanned files"
+        );
+        assert!(
+            !results.contains("results.txt"),
+            "run {run} must not report the output file"
+        );
+    }
+}
+
+#[test]
+fn scan_config_exclusions_skip_directories_even_with_no_ignore() {
+    // `exclusions` used to be documented but read by no code, so vendor/
+    // was scanned. The patterns file lives outside the scanned tree.
+    let temp = TempDir::new().unwrap();
+    let scanme = temp.path().join("scanme");
+    fs::create_dir_all(scanme.join("vendor").join("lib")).unwrap();
+    fs::create_dir_all(scanme.join("src")).unwrap();
+    fs::write(scanme.join("src").join("app.txt"), "TODO app\n").unwrap();
+    fs::write(scanme.join("vendor").join("dep.txt"), "TODO dep\n").unwrap();
+    fs::write(
+        scanme.join("vendor").join("lib").join("deep.txt"),
+        "TODO deep\n",
+    )
+    .unwrap();
+    let patterns = temp.path().join("patterns.yaml");
+    fs::write(
+        &patterns,
+        "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusions:\n  - vendor\n",
+    )
+    .unwrap();
+    let out = temp.path().join("results.txt");
+
+    ob().arg("scan")
+        .arg("-p")
+        .arg(&patterns)
+        .arg("--hidden")
+        .arg("--no-ignore")
+        .arg("-o")
+        .arg(&out)
+        .arg(&scanme)
+        .assert()
+        .success();
+    let results = fs::read_to_string(&out).unwrap();
+    assert!(results.contains("TODO app"), "got: {results}");
+    assert!(
+        !results.contains("vendor"),
+        "vendor/ must be skipped: {results}"
+    );
+
+    // A file named as an input is scanned even inside an excluded directory.
+    ob().arg("scan")
+        .arg("-p")
+        .arg(&patterns)
+        .arg("-o")
+        .arg(&out)
+        .arg(scanme.join("vendor").join("dep.txt"))
+        .assert()
+        .success();
+    let results = fs::read_to_string(&out).unwrap();
+    assert!(results.contains("TODO dep"), "got: {results}");
+}
+
+#[test]
+fn scan_config_with_an_unknown_key_fails_naming_the_key() {
+    // A typo in a key used to be ignored, so the setting silently did
+    // nothing. The scan must fail and name the key.
+    let temp = TempDir::new().unwrap();
+    let scanme = temp.path().join("scanme");
+    fs::create_dir(&scanme).unwrap();
+    fs::write(scanme.join("a.txt"), "TODO\n").unwrap();
+    let patterns = temp.path().join("patterns.yaml");
+    fs::write(
+        &patterns,
+        "patterns:\n  - name: todo\n    pattern: 'TODO'\nexclusion:\n  - vendor\n",
+    )
+    .unwrap();
+
+    ob().arg("scan")
+        .arg("-p")
+        .arg(&patterns)
+        .arg(&scanme)
+        .assert()
+        .failure()
+        .stderr(contains("unknown field `exclusion`"));
+}
+
+#[test]
+fn replace_config_with_an_unknown_key_fails_naming_the_key_and_changes_nothing() {
+    // `replacement:` (singular) used to be ignored, leaving `replacements`
+    // empty. The run must fail before any file is touched.
+    let temp = TempDir::new().unwrap();
+    let work = temp.path().join("work");
+    fs::create_dir(&work).unwrap();
+    fs::write(work.join("a.txt"), "TODO\n").unwrap();
+    let config = temp.path().join("config.yaml");
+    fs::write(&config, "patterns: ['TODO']\nreplacement: ['DONE']\n").unwrap();
+
+    ob().arg("replace")
+        .arg(&work)
+        .arg("-c")
+        .arg(&config)
+        .assert()
+        .failure()
+        .stderr(contains("unknown field `replacement`"));
+    assert_eq!(fs::read_to_string(work.join("a.txt")).unwrap(), "TODO\n");
+    assert!(!work.join("a.txt.bak").exists());
+}
+
 #[test]
 fn unknown_scan_format_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
@@ -519,6 +1012,508 @@ fn replace_undo_round_trip_restores_content_with_gitignored_backups() {
         !dir.join("a.txt.bak").exists(),
         "undo consumes the backup by default"
     );
+}
+
+/// Runs `ob replace <dir> -p alpha -r beta` and asserts success.
+fn replace_alpha_with_beta(dir: &Path) {
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .success();
+}
+
+#[test]
+fn undo_and_clean_backups_leave_bak_files_oober_did_not_create() {
+    // Verified failure: undo treated every *.bak in the tree as its own. A
+    // user's settings.json.bak was copied over the live settings.json and
+    // deleted, an orphan db/prod.sql.bak was "restored" into a new
+    // db/prod.sql, and a gitignored node_modules/z.js.bak was restored too;
+    // clean-backups deleted all three.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+
+    // Best effort: without git the .gitignore is inert and the assertions
+    // below still hold.
+    let _ = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(dir)
+        .output();
+    fs::write(dir.join(".gitignore"), "node_modules/\n").unwrap();
+
+    // None of the user's live files contains the pattern.
+    fs::write(dir.join("settings.json"), "{\"theme\": \"dark\"}\n").unwrap();
+    fs::write(dir.join("settings.json.bak"), "{\"theme\": \"light\"}\n").unwrap();
+    fs::create_dir(dir.join("db")).unwrap();
+    fs::write(dir.join("db").join("prod.sql.bak"), "-- dump\n").unwrap();
+    fs::create_dir(dir.join("node_modules")).unwrap();
+    fs::write(dir.join("node_modules").join("z.js"), "live()\n").unwrap();
+    fs::write(dir.join("node_modules").join("z.js.bak"), "old()\n").unwrap();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+
+    let assert_user_files_untouched = |step: &str| {
+        let read = |rel: &str| fs::read_to_string(dir.join(rel)).unwrap();
+        assert_eq!(
+            read("settings.json"),
+            "{\"theme\": \"dark\"}\n",
+            "after {step}"
+        );
+        assert_eq!(
+            read("settings.json.bak"),
+            "{\"theme\": \"light\"}\n",
+            "after {step}"
+        );
+        assert_eq!(read("db/prod.sql.bak"), "-- dump\n", "after {step}");
+        assert!(
+            !dir.join("db").join("prod.sql").exists(),
+            "after {step}: an orphan .bak must not be restored into a new file"
+        );
+        assert_eq!(read("node_modules/z.js"), "live()\n", "after {step}");
+        assert_eq!(read("node_modules/z.js.bak"), "old()\n", "after {step}");
+    };
+
+    replace_alpha_with_beta(dir);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+    assert_user_files_untouched("replace");
+
+    // undo restores oober's own backup only, and says what it left alone.
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .assert()
+        .success()
+        .stdout(contains("--all-bak"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+    assert!(!dir.join("a.txt.bak").exists());
+    assert_user_files_untouched("undo");
+
+    // clean-backups removes oober's own backup only.
+    replace_alpha_with_beta(dir);
+    assert!(dir.join("a.txt.bak").exists());
+    ob().arg("clean-backups")
+        .arg("-d")
+        .arg(dir)
+        .assert()
+        .success()
+        .stdout(contains("--all-bak"));
+    assert!(!dir.join("a.txt.bak").exists());
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+    assert_user_files_untouched("clean-backups");
+}
+
+#[test]
+fn undo_and_clean_backups_leave_a_file_put_at_a_recorded_backup_path() {
+    // Verified failure: a backup record named only the backup's path. With
+    // oober's a.txt.bak deleted by hand, the user's own file at that path
+    // was restored over the live a.txt and deleted by undo, and deleted by
+    // clean-backups.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    let backup = dir.join("a.txt.bak");
+    fs::write(&file, "alpha one\n").unwrap();
+    replace_alpha_with_beta(dir);
+
+    fs::remove_file(&backup).unwrap();
+    fs::write(&backup, "USER OWN BAK\n").unwrap();
+    fs::write(&file, "live edited\n").unwrap();
+
+    for command in ["undo", "clean-backups"] {
+        ob().arg(command)
+            .arg("-d")
+            .arg(dir)
+            .assert()
+            .success()
+            .stdout(contains("--all-bak"));
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            "live edited\n",
+            "after {command}"
+        );
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            "USER OWN BAK\n",
+            "after {command}"
+        );
+    }
+}
+
+#[test]
+fn undo_restores_the_backup_of_a_hidden_file_named_as_input() {
+    // The backup walk skips hidden paths; the backup record still finds it.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join(".env");
+    fs::write(&file, "alpha one\n").unwrap();
+
+    replace_alpha_with_beta(&file);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+
+    ob().arg("undo").arg("-d").arg(dir).assert().success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+    assert!(!dir.join(".env.bak").exists());
+}
+
+#[test]
+fn undo_and_clean_backups_all_bak_act_on_unrecorded_backups() {
+    // Backups made by 0.1.1, or whose record was lost with the cache dir.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("a.txt"), "modified\n").unwrap();
+    fs::write(dir.join("a.txt.bak"), "original\n").unwrap();
+    fs::write(dir.join("b.txt.bak"), "stale\n").unwrap();
+
+    // The preview changes nothing.
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .arg("--all-bak")
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("Would restore"));
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "modified\n");
+    assert!(!dir.join("b.txt").exists());
+
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .arg("--all-bak")
+        .arg("--keep-backups")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original\n");
+    assert_eq!(fs::read_to_string(dir.join("b.txt")).unwrap(), "stale\n");
+
+    ob().arg("clean-backups")
+        .arg("-d")
+        .arg(dir)
+        .arg("--all-bak")
+        .assert()
+        .success();
+    assert!(!dir.join("a.txt.bak").exists());
+    assert!(!dir.join("b.txt.bak").exists());
+}
+
+#[test]
+fn undo_dry_run_changes_nothing() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+    replace_alpha_with_beta(dir);
+
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("Would restore"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+        "alpha one\n"
+    );
+
+    // The record survived the preview: a real undo still restores.
+    ob().arg("undo").arg("-d").arg(dir).assert().success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+}
+
+#[test]
+fn undo_continues_past_a_failed_restore_and_exits_nonzero() {
+    // Verified failure: the first restore that failed aborted the run, so
+    // the files after it in walk order were never restored.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let names = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"];
+    for name in names {
+        fs::write(dir.join(name), "alpha one\n").unwrap();
+    }
+    replace_alpha_with_beta(dir);
+
+    // Three files can no longer be restored: a directory sits at each path.
+    // Whichever of them the walk reaches first, the other files must still
+    // be restored.
+    let blocked = ["a.txt", "c.txt", "e.txt"];
+    for name in blocked {
+        fs::remove_file(dir.join(name)).unwrap();
+        fs::create_dir(dir.join(name)).unwrap();
+    }
+
+    ob().arg("undo").arg("-d").arg(dir).assert().failure();
+
+    for name in names {
+        if blocked.contains(&name) {
+            assert!(dir.join(name).is_dir(), "the directory must be left alone");
+            assert_eq!(
+                fs::read_to_string(dir.join(format!("{name}.bak"))).unwrap(),
+                "alpha one\n",
+                "the backup of a failed restore must be kept"
+            );
+        } else {
+            assert_eq!(
+                fs::read_to_string(dir.join(name)).unwrap(),
+                "alpha one\n",
+                "{name} must be restored despite the failures"
+            );
+        }
+    }
+}
+
+#[test]
+fn replace_refuses_a_file_edited_since_its_backup_was_made() {
+    // Verified failure: with a.txt.bak already there, a second replace
+    // modified a.txt with no backup of its current state and no warning, so
+    // a later undo rolled back to before the first run and wiped every edit
+    // made in between.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+    replace_alpha_with_beta(dir);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+
+    // A hand edit; the added line changes the size, so the check does not
+    // hang on the clock's resolution.
+    let edited = "beta one\nalpha by hand\n";
+    fs::write(&file, edited).unwrap();
+
+    let second_run = |dry_run: bool| {
+        let mut cmd = ob();
+        cmd.arg("replace").arg(dir).arg("-p").arg("alpha");
+        cmd.arg("-r").arg("beta");
+        if dry_run {
+            cmd.arg("--dry-run");
+        }
+        cmd.assert().failure().stderr(contains("a.txt.bak"));
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            edited,
+            "the hand edit must be intact (dry_run: {dry_run})"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+            "alpha one\n"
+        );
+    };
+    // The dry run reports the refusal the real run makes.
+    second_run(true);
+    second_run(false);
+
+    // --no-backup is the stated way through.
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .arg("--no-backup")
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "beta one\nbeta by hand\n"
+    );
+}
+
+#[test]
+fn replace_changes_nothing_when_backup_records_cannot_be_written() {
+    // Verified failure: the record is written after the file. With a record
+    // directory that could not be created, every matching file was rewritten
+    // first, each then got a per-file error, and the summary said
+    // `Files changed : 0`.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path().join("tree");
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "alpha a\n").unwrap();
+    fs::write(dir.join("b.txt"), "alpha b\n").unwrap();
+    // A regular file sits where the record directory belongs.
+    let cache = temp.path().join("cache");
+    fs::create_dir_all(cache.join("oober")).unwrap();
+    fs::write(cache.join("oober").join("backups"), "").unwrap();
+
+    let replace = || {
+        let mut cmd = ob();
+        cmd.env("XDG_CACHE_HOME", &cache).arg("replace").arg(&dir);
+        cmd.arg("-p").arg("alpha").arg("-r").arg("beta");
+        cmd
+    };
+    let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+
+    replace()
+        .assert()
+        .failure()
+        .stderr(contains("backups"))
+        .stderr(contains("XDG_CACHE_HOME"))
+        .stderr(contains("--no-backup"));
+    assert_eq!(read("a.txt"), "alpha a\n");
+    assert_eq!(read("b.txt"), "alpha b\n");
+    assert!(!dir.join("a.txt.bak").exists());
+    assert!(!dir.join("b.txt.bak").exists());
+
+    // A dry run writes no record, so it still previews.
+    replace().arg("--dry-run").assert().success();
+    assert_eq!(read("a.txt"), "alpha a\n");
+
+    // --no-backup is the stated way through in the same environment.
+    replace().arg("--no-backup").assert().success();
+    assert_eq!(read("a.txt"), "beta a\n");
+    assert_eq!(read("b.txt"), "beta b\n");
+    assert!(!dir.join("a.txt.bak").exists());
+}
+
+#[test]
+fn replace_twice_without_an_edit_between_keeps_the_oldest_backup() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+
+    replace_alpha_with_beta(dir);
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("beta")
+        .arg("-r")
+        .arg("gamma")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "gamma one\n");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+        "alpha one\n"
+    );
+
+    ob().arg("undo").arg("-d").arg(dir).assert().success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+}
+
+#[test]
+fn replace_refuses_a_file_whose_bak_path_is_taken() {
+    // Verified failure: a user's own .bak (or a directory at that path) made
+    // replace modify the file with no backup at all, and a dangling symlink
+    // there had the backup written through it to wherever it pointed.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let outside = TempDir::new().unwrap();
+    let link_target = outside.path().join("elsewhere.txt");
+
+    fs::write(dir.join("user.txt"), "alpha user\n").unwrap();
+    fs::write(dir.join("user.txt.bak"), "my own copy\n").unwrap();
+    fs::write(dir.join("dir.txt"), "alpha dir\n").unwrap();
+    fs::create_dir(dir.join("dir.txt.bak")).unwrap();
+    #[cfg(unix)]
+    {
+        fs::write(dir.join("link.txt"), "alpha link\n").unwrap();
+        std::os::unix::fs::symlink(&link_target, dir.join("link.txt.bak")).unwrap();
+    }
+    fs::write(dir.join("free.txt"), "alpha free\n").unwrap();
+
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .failure()
+        .stderr(contains("user.txt.bak"))
+        .stderr(contains("dir.txt.bak"));
+
+    let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+    assert_eq!(read("user.txt"), "alpha user\n");
+    assert_eq!(read("user.txt.bak"), "my own copy\n");
+    assert_eq!(read("dir.txt"), "alpha dir\n");
+    assert!(dir.join("dir.txt.bak").is_dir());
+    assert_eq!(fs::read_dir(dir.join("dir.txt.bak")).unwrap().count(), 0);
+    #[cfg(unix)]
+    {
+        assert_eq!(read("link.txt"), "alpha link\n");
+        assert!(
+            fs::symlink_metadata(dir.join("link.txt.bak"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+    assert!(
+        !link_target.exists(),
+        "nothing may be created through a symlink at the .bak path"
+    );
+
+    // A file whose .bak path is free is still processed and backed up.
+    assert_eq!(read("free.txt"), "beta free\n");
+    assert_eq!(read("free.txt.bak"), "alpha free\n");
+}
+
+#[test]
+fn replace_refusal_names_a_way_past_it_that_works_for_what_sits_at_the_bak_path() {
+    // Verified failure: every refusal said to run `ob undo` or
+    // `ob clean-backups` (with --all-bak). Neither command lists a directory
+    // or a dangling symlink, so for those the advice changed nothing and the
+    // next run refused the same file again.
+    let refusal = |occupy: &dyn Fn(&Path)| {
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path();
+        let file = dir.join("a.txt");
+        let backup = dir.join("a.txt.bak");
+        fs::write(&file, "alpha one\n").unwrap();
+        occupy(&backup);
+
+        let output = ob()
+            .arg("replace")
+            .arg(dir)
+            .arg("-p")
+            .arg("alpha")
+            .arg("-r")
+            .arg("beta")
+            .assert()
+            .failure()
+            .stderr(contains("a.txt.bak"))
+            .stderr(contains("--no-backup"))
+            .get_output()
+            .clone();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+        (temp, String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+
+    // A regular file is listed by undo and clean-backups with --all-bak.
+    let (_temp, stderr) = refusal(&|backup| fs::write(backup, "my own copy\n").unwrap());
+    assert!(stderr.contains("ob undo"), "{stderr}");
+    assert!(stderr.contains("--all-bak"), "{stderr}");
+
+    // Anything else has to be moved or removed by hand.
+    let by_hand = |stderr: &str| {
+        assert!(stderr.contains("remove it yourself"), "{stderr}");
+        assert!(!stderr.contains("ob undo"), "{stderr}");
+        assert!(!stderr.contains("clean-backups"), "{stderr}");
+    };
+
+    let (temp, stderr) = refusal(&|backup| fs::create_dir(backup).unwrap());
+    by_hand(&stderr);
+    // Following the advice gets the file processed and backed up.
+    let dir = temp.path();
+    fs::remove_dir(dir.join("a.txt.bak")).unwrap();
+    replace_alpha_with_beta(dir);
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "beta one\n");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+        "alpha one\n"
+    );
+
+    #[cfg(unix)]
+    {
+        let (_temp, stderr) = refusal(&|backup| {
+            std::os::unix::fs::symlink(backup.with_file_name("nowhere"), backup).unwrap()
+        });
+        by_hand(&stderr);
+    }
 }
 
 #[test]
@@ -624,6 +1619,39 @@ fn replace_accepts_positional_directory_inputs() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn replace_does_not_descend_into_excluded_directories() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // An excluded directory must be pruned, not walked and then filtered:
+    // reading an unreadable one would print a walk warning.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("a.txt"), "alpha\n").unwrap();
+    let excluded = dir.join("build");
+    fs::create_dir(&excluded).unwrap();
+    fs::set_permissions(&excluded, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let output = ob()
+        .arg("replace")
+        .arg(dir)
+        .args(["-p", "alpha", "-r", "beta", "-e", "build", "--no-backup"])
+        .output()
+        .unwrap();
+
+    // Restore permissions before asserting so TempDir cleanup succeeds.
+    fs::set_permissions(&excluded, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("skipping unreadable path"),
+        "the excluded directory must not be read: {stderr}"
+    );
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "beta\n");
+}
+
 #[test]
 fn replace_accepts_a_single_file_input() {
     let temp = TempDir::new().unwrap();
@@ -707,6 +1735,68 @@ fn replace_legacy_dir_flag_appends_to_positional_inputs() {
 }
 
 #[test]
+fn replace_pattern_without_replacement_is_a_usage_error_and_touches_nothing() {
+    // `-p` with no `-r` used to become a null replacement, which deletes the
+    // line after each match.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.txt");
+    fs::write(&file, "alpha\nkeep me\n").unwrap();
+
+    // clap usage errors exit with code 2.
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-p")
+        .arg("alpha")
+        .assert()
+        .code(2)
+        .stderr(contains("--replacement"));
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .code(2)
+        .stderr(contains("--pattern"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\nkeep me\n");
+    assert!(!temp.path().join("a.txt.bak").exists());
+}
+
+#[test]
+fn replace_with_undefined_group_reference_errors_and_touches_nothing() {
+    // `$5` is a reference to group 5, which the pattern does not define; it
+    // used to expand to nothing and erase the matched text.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.txt");
+    fs::write(&file, "cost PRICE now\n").unwrap();
+
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-p")
+        .arg("PRICE")
+        .arg("-r")
+        .arg("$5")
+        .assert()
+        .failure()
+        .stderr(contains("${1}"))
+        .stderr(contains("$$"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "cost PRICE now\n");
+    assert!(!temp.path().join("a.txt.bak").exists());
+
+    // The documented escape writes a literal dollar sign.
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-p")
+        .arg("PRICE")
+        .arg("-r")
+        .arg("$$5")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "cost $5 now\n");
+}
+
+#[test]
 fn replace_nonexistent_input_errors_like_scan() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path();
@@ -763,6 +1853,34 @@ fn mismatched_patterns_replacements_config_is_rejected_and_file_untouched() {
     assert!(
         !work.join("t.txt.bak").exists(),
         "no backup may be created for a rejected config"
+    );
+}
+
+#[test]
+fn replace_leaves_its_own_config_file_untouched() {
+    // `ob replace . -c cfg.yaml` with the config inside the processed tree
+    // and no extension filter: rewriting the config would turn its pattern
+    // into `[TODO]`, a character class, for the next run.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let config = "patterns:\n  - \"TODO\"\nreplacements:\n  - \"[TODO]\"\n";
+    fs::write(dir.join("cfg.yaml"), config).unwrap();
+    fs::write(dir.join("notes.txt"), "TODO item\n").unwrap();
+
+    ob().current_dir(dir)
+        .args(["replace", ".", "-c", "cfg.yaml", "--no-backup"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(dir.join("cfg.yaml")).unwrap(),
+        config.as_bytes(),
+        "replace must not rewrite the config file it was given"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("notes.txt")).unwrap(),
+        "[TODO] item\n",
+        "other files in the tree must still be processed"
     );
 }
 
@@ -953,6 +2071,29 @@ fn replace_without_inputs_or_list_presets_is_a_helpful_error() {
 }
 
 #[test]
+fn replace_preset_with_pattern_is_a_usage_error_and_touches_nothing() {
+    // --preset used to win silently, dropping the -p/-r the user asked for.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.txt");
+    fs::write(&file, "alpha   \n").unwrap();
+
+    // clap usage errors exit with code 2.
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("--preset")
+        .arg("trim-whitespace")
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .code(2);
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha   \n");
+    assert!(!temp.path().join("a.txt.bak").exists());
+}
+
+#[test]
 fn unknown_preset_is_rejected_at_parse_time() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("t.txt");
@@ -1049,6 +2190,57 @@ fn rename_collision_with_default_workers_never_loses_data() {
             "no file content may be lost under parallel execution"
         );
     }
+}
+
+#[test]
+fn rename_with_undefined_group_reference_errors_and_renames_nothing() {
+    // `$2_` is a reference to a group named `2_`, which the pattern does
+    // not define; it used to expand to nothing and rename the file to `01`.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("01_intro.md"), "intro").unwrap();
+
+    ob().arg("rename")
+        .arg("-d")
+        .arg(dir)
+        .arg("-p")
+        .arg(r"(\d+)_(.*)")
+        .arg("-r")
+        .arg("$2_$1")
+        .assert()
+        .failure()
+        .stderr(contains("${1}"))
+        .stderr(contains("$$"));
+
+    let names: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["01_intro.md"]);
+}
+
+#[test]
+fn rename_reorder_example_from_help_swaps_name_parts() {
+    // The example shipped in `ob rename --help` and the usage banner.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("12_intro.md"), "intro").unwrap();
+
+    ob().arg("rename")
+        .arg("-d")
+        .arg(dir)
+        .arg("-p")
+        .arg(r"^(\d+)_(.+?)(\.[^.]+)?$")
+        .arg("-r")
+        .arg("${2}_${1}${3}")
+        .assert()
+        .success();
+
+    assert!(!dir.join("12_intro.md").exists());
+    assert_eq!(
+        fs::read_to_string(dir.join("intro_12.md")).unwrap(),
+        "intro"
+    );
 }
 
 // ---------------------------------------------------------------------------

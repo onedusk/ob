@@ -10,7 +10,7 @@ patterns:
     pattern: "^%"
   - name: bullet
     # Unicode bullet
-    pattern: ""
+    pattern: "\u2022"
   - name: dash
     pattern: "-"
   - name: punctuation
