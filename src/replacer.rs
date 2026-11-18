@@ -321,7 +321,7 @@ pub struct ReplaceOptions {
     pub config_file: Option<PathBuf>,
     /// A single regex pattern to search for.
     pub pattern: Option<String>,
-    /// The replacement string for `pattern`.
+    /// The replacement string for `pattern`. Required when `pattern` is set.
     pub replacement: Option<String>,
     /// The input files and/or directories to process.
     pub inputs: Vec<PathBuf>,
@@ -361,6 +361,16 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
         verbose,
         workers,
     } = options;
+
+    // A lone pattern must never silently become a null replacement ("delete
+    // the line after the match"). The CLI rejects this at parse time; this
+    // guard covers library callers.
+    if pattern.is_some() && replacement.is_none() {
+        return Err(
+            "a pattern needs a replacement (-r/--replacement); to delete the line after each match, use a YAML config with an explicit `null` replacement"
+                .into(),
+        );
+    }
 
     // Load or create config
     let config = if let Some(preset_type) = preset {
@@ -1125,6 +1135,39 @@ mod tests {
             "XX\n",
             "a deduplicated file must be transformed exactly once"
         );
+    }
+
+    #[test]
+    fn test_pattern_without_replacement_is_rejected_and_touches_nothing() {
+        // A lone pattern used to become a null replacement, which deletes
+        // the line after each match.
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        fs::write(dir.join("a.txt"), "alpha\nkeep me\n").unwrap();
+
+        let err = run_replace(ReplaceOptions {
+            preset: None,
+            config_file: None,
+            pattern: Some("alpha".into()),
+            replacement: None,
+            inputs: vec![dir.to_path_buf()],
+            extensions: vec![],
+            exclude: vec![],
+            no_backup: false,
+            dry_run: false,
+            verbose: false,
+            workers: Some(1),
+        })
+        .expect_err("a pattern without a replacement must be an error");
+        assert!(
+            matches!(err, Error::Config(_)) && err.to_string().contains("replacement"),
+            "error must be a config error naming the replacement: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "alpha\nkeep me\n"
+        );
+        assert!(!dir.join("a.txt.bak").exists());
     }
 
     #[test]

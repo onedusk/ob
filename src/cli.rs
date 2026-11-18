@@ -185,12 +185,12 @@ pub enum Commands {
         #[arg(short, long)]
         config: Option<PathBuf>,
 
-        /// A single regex pattern to search for.
-        #[arg(short, long)]
+        /// A single regex pattern to search for. Requires -r/--replacement.
+        #[arg(short, long, requires = "replacement")]
         pattern: Option<String>,
 
-        /// The string to replace the matched pattern with.
-        #[arg(short, long)]
+        /// The string to replace the matched pattern with. Requires -p/--pattern.
+        #[arg(short, long, requires = "pattern")]
         replacement: Option<String>,
 
         /// The directory to process (legacy alias for a positional input).
@@ -428,6 +428,22 @@ mod tests {
             assert_eq!(inputs.len(), positionals, "{argv:?} positional inputs");
             assert_eq!(dir.is_some(), has_dir, "{argv:?} legacy -d");
         }
+    }
+
+    #[test]
+    fn test_replace_pattern_and_replacement_require_each_other() {
+        use clap::error::ErrorKind;
+
+        // -p alone used to become a null replacement, which deletes the line
+        // after each match.
+        for argv in [
+            &["ob", "replace", ".", "-p", "TODO"][..],
+            &["ob", "replace", ".", "-r", "DONE"],
+        ] {
+            let err = Args::try_parse_from(argv).expect_err("must be a usage error");
+            assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument, "{argv:?}");
+        }
+        assert!(Args::try_parse_from(["ob", "replace", ".", "-p", "TODO", "-r", "DONE"]).is_ok());
     }
 
     #[test]

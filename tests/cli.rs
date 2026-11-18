@@ -758,6 +758,34 @@ fn replace_legacy_dir_flag_appends_to_positional_inputs() {
 }
 
 #[test]
+fn replace_pattern_without_replacement_is_a_usage_error_and_touches_nothing() {
+    // `-p` with no `-r` used to become a null replacement, which deletes the
+    // line after each match.
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.txt");
+    fs::write(&file, "alpha\nkeep me\n").unwrap();
+
+    // clap usage errors exit with code 2.
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-p")
+        .arg("alpha")
+        .assert()
+        .code(2)
+        .stderr(contains("--replacement"));
+    ob().arg("replace")
+        .arg(temp.path())
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .code(2)
+        .stderr(contains("--pattern"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\nkeep me\n");
+    assert!(!temp.path().join("a.txt.bak").exists());
+}
+
+#[test]
 fn replace_nonexistent_input_errors_like_scan() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path();
