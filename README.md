@@ -304,7 +304,7 @@ The rules come from exactly one of `--preset`, `--config`, or `--pattern` (with 
 Options:
 
 - `--preset <PRESET>` - Built-in pattern set: `remove-copyright`, `clean-debug`, `remove-todos`, `trim-whitespace`, `remove-empty-comments`, `tabs-to-spaces`, `spaces-to-tabs`
-- `-c, --config <FILE>` - YAML configuration file
+- `-c, --config <FILE>` - YAML configuration file; the file itself is never processed, even inside an input directory
 - `-p, --pattern <PATTERN>` - Single pattern to match (requires `-r`)
 - `-r, --replacement <TEXT>` - Replacement text (requires `-p`); to delete the line after each match, use a config file with a `null` replacement
 - `-d, --dir <PATH>` - Directory to process (legacy alias for a positional input)

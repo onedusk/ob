@@ -880,6 +880,34 @@ fn mismatched_patterns_replacements_config_is_rejected_and_file_untouched() {
 }
 
 #[test]
+fn replace_leaves_its_own_config_file_untouched() {
+    // `ob replace . -c cfg.yaml` with the config inside the processed tree
+    // and no extension filter: rewriting the config would turn its pattern
+    // into `[TODO]`, a character class, for the next run.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let config = "patterns:\n  - \"TODO\"\nreplacements:\n  - \"[TODO]\"\n";
+    fs::write(dir.join("cfg.yaml"), config).unwrap();
+    fs::write(dir.join("notes.txt"), "TODO item\n").unwrap();
+
+    ob().current_dir(dir)
+        .args(["replace", ".", "-c", "cfg.yaml", "--no-backup"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(dir.join("cfg.yaml")).unwrap(),
+        config.as_bytes(),
+        "replace must not rewrite the config file it was given"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("notes.txt")).unwrap(),
+        "[TODO] item\n",
+        "other files in the tree must still be processed"
+    );
+}
+
+#[test]
 fn all_invalid_extension_filter_is_rejected_for_replace_and_scan() {
     // Audit repro: `-x .` normalizes to an empty extension set, and an empty
     // set means "process every file" — so `ob replace -d . -x . -p foo -r bar`

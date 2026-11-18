@@ -355,7 +355,8 @@ pub struct ReplaceOptions {
 /// This function orchestrates the entire replacement process:
 /// 1. It loads the configuration from a preset, a file, or command-line arguments.
 /// 2. It collects the files to process from the inputs (walking directories,
-///    taking explicit files as given), deduplicating files reached twice.
+///    taking explicit files as given), deduplicating files reached twice
+///    and leaving out symlinks and the config file itself.
 /// 3. It uses a Rayon thread pool to process the files in parallel.
 /// 4. It collects and prints summary statistics.
 pub fn run_replace(options: ReplaceOptions) -> Result<()> {
@@ -382,6 +383,9 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
                 .into(),
         );
     }
+
+    // The config file in use, in canonical form; set below when one is given.
+    let mut config_canonical: Option<PathBuf> = None;
 
     // Load or create config
     let config = if let Some(preset_type) = preset {
@@ -411,6 +415,7 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
             .unwrap_or_else(|| PathBuf::from("."));
         let resolved_path = ConfigLoader::find_config(&cfg_path, &config_dir)?;
         println!("Using config file: {}", resolved_path.display());
+        config_canonical = fs::canonicalize(&resolved_path).ok();
         ConfigLoader::load_replace_config(&resolved_path)?
     } else if let Some(pat) = pattern {
         // Use single pattern/replacement
@@ -456,8 +461,12 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
     // the replacement twice would double-transform content and race the
     // parallel atomic writes. Paths are deduplicated by canonical form so
     // different spellings of one file collapse.
+    //
+    // The config file starts out as already seen, so it is never processed
+    // when it lives inside the tree: rewriting it would change its own
+    // patterns for the next run.
     let mut all_files: Vec<PathBuf> = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut seen: HashSet<PathBuf> = config_canonical.into_iter().collect();
     let mut add_file = |path: &Path| {
         let key = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if seen.insert(key) {

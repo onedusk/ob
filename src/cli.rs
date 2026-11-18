@@ -193,6 +193,7 @@ pub enum Commands {
         list_presets: bool,
 
         /// Path to a YAML configuration file for replacement rules.
+        /// The file itself is never processed, even inside an input directory.
         /// Cannot be combined with --preset or -p/--pattern.
         #[arg(short, long, conflicts_with = "pattern")]
         config: Option<PathBuf>,
