@@ -1,4 +1,4 @@
-use crate::backup_records;
+use crate::backup_records::{self, BackupRecord};
 use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
@@ -34,8 +34,10 @@ pub struct Replacer {
 #[derive(Clone, Copy)]
 pub struct ProcessOptions {
     /// If `true`, a `.bak` file will be created before modifying a file.
-    /// An existing `.bak` is never overwritten, so the oldest backup always
-    /// preserves the pre-oober original.
+    /// An existing `.bak` is never overwritten: it is kept when it is oober's
+    /// own recorded backup and the file is unchanged since oober last wrote
+    /// it, so the oldest backup preserves the pre-oober original. Otherwise
+    /// the file is refused.
     pub create_backup: bool,
     /// If `true`, changes will be calculated but not written to disk.
     pub dry_run: bool,
@@ -149,6 +151,65 @@ fn find_backups(dir: &Path) -> BackupCandidates {
     }
 
     backups
+}
+
+/// Decides what `replace` does about the backup of `path` before changing
+/// it. Returns the `.bak` path, plus the record of the backup already there
+/// when that backup is kept; `None` means a new backup must be created.
+///
+/// An existing backup is kept only when it is oober's own (recorded, a
+/// regular file) and the file's size and mtime still equal the record's:
+/// nothing touched the file since oober last wrote it, so the oldest backup
+/// still leads back to the pre-oober original. Anything else at the path is
+/// an error. Modifying the file anyway would leave its current state with no
+/// backup, and a later undo would wipe every edit made since the first run.
+fn check_backup(path: &Path) -> Result<(PathBuf, Option<BackupRecord>)> {
+    let mut backup_path = path.as_os_str().to_owned();
+    backup_path.push(".bak");
+    let backup_path = PathBuf::from(backup_path);
+
+    let Ok(backup_metadata) = fs::symlink_metadata(&backup_path) else {
+        return Ok((backup_path, None));
+    };
+    if backup_metadata.is_file() {
+        if let Some(record) = backup_records::load(&backup_path) {
+            let metadata = fs::metadata(path)?;
+            if metadata.len() == record.size && metadata.modified()? == record.mtime {
+                return Ok((backup_path, Some(record)));
+            }
+        }
+    }
+    Err(Error::BackupExists(backup_path))
+}
+
+/// Writes `new_content` to `path` atomically. When `backup_file` is given,
+/// the new, still empty backup is first filled with `content` (what `path`
+/// holds now) and given the permissions of `path`.
+fn write_file(
+    path: &Path,
+    backup_file: Option<fs::File>,
+    content: &str,
+    new_content: &str,
+) -> Result<()> {
+    if let Some(mut backup_file) = backup_file {
+        backup_file.write_all(content.as_bytes())?;
+        backup_file.set_permissions(fs::metadata(path)?.permissions())?;
+    }
+
+    // Write atomically using tempfile
+    if let Some(parent) = path.parent() {
+        let mut temp_file = NamedTempFile::new_in(parent)?;
+        temp_file.write_all(new_content.as_bytes())?;
+
+        // Preserve file permissions
+        let perms = fs::metadata(path)?.permissions();
+        fs::set_permissions(temp_file.path(), perms)?;
+
+        temp_file.persist(path)?;
+    } else {
+        return Err(format!("Could not get parent directory for {}", path.display()).into());
+    }
+    Ok(())
 }
 
 /// Restores `original` from `backup`, writing through a temp file in the
@@ -363,6 +424,14 @@ impl Replacer {
             }
         }
 
+        // Settle the backup before anything is written. A dry run makes the
+        // same check, so it reports the files a real run would refuse.
+        let backup = if total_changes > 0 && options.create_backup {
+            Some(check_backup(path)?)
+        } else {
+            None
+        };
+
         // In a dry run, capture what would change so the caller can show it.
         let preview = if options.dry_run && total_changes > 0 {
             Some(dry_run_preview(&content, new_content.as_ref()))
@@ -372,49 +441,41 @@ impl Replacer {
 
         // Write if changed
         if total_changes > 0 && !options.dry_run {
-            // The backup path, and whether this call created the backup.
-            let mut backup: Option<(PathBuf, bool)> = None;
-            if options.create_backup {
-                let backup_path = format!("{}.bak", path.display());
-                // Never overwrite an existing backup: the oldest backup is the
-                // pre-oober original, which undo must be able to restore.
-                let created = !Path::new(&backup_path).exists();
-                if created {
-                    fs::copy(path, &backup_path)?;
+            // Nothing sits at the backup path: create the backup there.
+            // `create_new` never follows a symlink and never overwrites a
+            // file that appeared since the check.
+            let new_backup = match &backup {
+                Some((backup_path, None)) => Some(backup_path),
+                _ => None,
+            };
+            let backup_file = new_backup
+                .map(|backup_path| {
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(backup_path)
+                })
+                .transpose()?;
+
+            if let Err(e) = write_file(path, backup_file, &content, new_content.as_ref()) {
+                // The file is as it was. Take back the backup this call
+                // created: with no record, it would make the next run refuse
+                // the file.
+                if let Some(backup_path) = new_backup {
+                    let _ = fs::remove_file(backup_path);
                 }
-                backup = Some((PathBuf::from(backup_path), created));
-            }
-
-            // Write atomically using tempfile
-            if let Some(parent) = path.parent() {
-                let mut temp_file = NamedTempFile::new_in(parent)?;
-                temp_file.write_all(new_content.as_ref().as_bytes())?;
-
-                // Preserve file permissions
-                let perms = fs::metadata(path)?.permissions();
-                fs::set_permissions(temp_file.path(), perms)?;
-
-                temp_file.persist(path)?;
-            } else {
-                return Err(
-                    format!("Could not get parent directory for {}", path.display()).into(),
-                );
+                return Err(e);
             }
 
             // Record the backup as oober's own, with the size and mtime the
             // file has now that it is written: undo and clean-backups act
-            // only on recorded backups. A new backup gets a new record; a
-            // kept older backup has its record refreshed, if it has one.
-            if let Some((backup_path, created)) = backup {
-                let created_at = if created {
-                    Some(SystemTime::now())
-                } else {
-                    backup_records::load(&backup_path).map(|record| record.created)
-                };
-                if let Some(created_at) = created_at {
-                    backup_records::write(&backup_path, path, created_at)
-                        .map_err(|e| Error::BackupRecord(backup_path, e.to_string()))?;
-                }
+            // only on recorded backups, and the next replace keeps this
+            // backup only while the file still matches. A kept older backup
+            // has its record refreshed.
+            if let Some((backup_path, record)) = backup {
+                let created = record.map_or_else(SystemTime::now, |record| record.created);
+                backup_records::write(&backup_path, path, created)
+                    .map_err(|e| Error::BackupRecord(backup_path, e.to_string()))?;
             }
         }
 
@@ -2316,6 +2377,11 @@ Debug.Print(total)
         assert_eq!(kept.size, 6);
         assert_eq!(kept.mtime, fs::metadata(&file).unwrap().modified().unwrap());
         assert_eq!(kept.created, record.created);
+
+        // So the next replace still sees its own untouched backup.
+        replacer.process_file(&file, options).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), "longer text\n");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "alpha\n");
 
         // A plain undo consumes the backup and its record.
         let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();

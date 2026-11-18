@@ -199,7 +199,7 @@ The only keys are `patterns`, `replacements`, `blocks` (each entry with `start` 
 2. **File Walker**: `ignore` crate provides gitignore-aware traversal
 3. **Parallel Processing**: `rayon` enables multi-threaded file processing
 4. **Atomic Writes**: `tempfile` ensures safe file modifications
-5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten, so the first backup preserves the original
+5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise
 
 ### Command Structure
 
@@ -325,10 +325,12 @@ Options:
 - `-d, --dir <PATH>` - Directory to process (legacy alias for a positional input)
 - `-x, --ext <EXTENSIONS>` - File extensions to include
 - `-e, --exclude <DIRS>` - Directory names to exclude, matched below each input directory (not against the input's own path); files named as inputs are exempt
-- `--no-backup` - Don't create backup files
+- `--no-backup` - Don't create backup files (and skip the existing-backup check below)
 - `--dry-run` - Preview changes without applying
 - `-w, --workers <N>` - Number of threads to use
 - `<INPUTS>...` - Files or directories to process (like `scan`); the same file reached twice is processed once
+
+Before changing a file, `replace` backs it up to `<file>.bak`. If something already sits at that path, the file is changed only when all of this holds: the `.bak` is a regular file that oober recorded creating, and the file still has the size and modification time oober left it with. That is the case for back-to-back runs, so the oldest backup is kept and `undo` still restores the original. In every other case (the `.bak` is your own file, a directory or a symlink, or the file was edited since oober last wrote it) the file is left unchanged, an error names the backup, the other files are still processed, and the run exits non-zero. Changing the file anyway would leave its current state with no backup, and a later `undo` would discard every edit made since the first run. To continue, run `ob undo` (restore the backup) or `ob clean-backups` (remove it; the next run backs up the file as it is now), adding `--all-bak` when oober did not create the `.bak`, or pass `--no-backup`. `--dry-run` makes the same check and reports the files a real run would refuse.
 
 `replace` never processes a symbolic link to a file, whether it is found in a directory or named as an input: each one is reported on stderr (`Skipping symlink: <path>`) and left as a link. The file it points to is edited only when that file is itself among the inputs. A directory given as an input through a symlink is still walked.
 
@@ -408,7 +410,7 @@ Benchmark on a large codebase (100k files):
 
 ## Safety Features
 
-- **Automatic backups** - Creates `.bak` files before any modification; an existing backup is never overwritten
+- **Automatic backups** - Creates `.bak` files before any modification; an existing backup is never overwritten, and a file whose `.bak` path is already taken by something else is refused instead of being changed without a backup
 - **Atomic writes** - Uses temporary files to prevent corruption
 - **Dry-run mode** - Preview all changes before applying
 - **Binary detection** - Automatically skips binary files
@@ -474,7 +476,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - The tool respects `.gitignore` files automatically; `scan` can opt out with `--hidden` / `--no-ignore`
 - Binary files are automatically skipped
-- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the first backup preserves the original)
+- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise (see [`replace`](#replace))
 - Empty lines left after block removal are automatically cleaned up
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)

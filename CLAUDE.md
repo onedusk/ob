@@ -144,7 +144,7 @@ The tool uses a subcommand architecture via `cli::Commands` enum:
 2. **File Walker**: `ignore` crate provides gitignore-aware traversal
 3. **Parallel Processing**: `rayon` enables multi-threaded file processing with configurable workers
 4. **Atomic Writes**: `tempfile` ensures safe file modifications via rename operations
-5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten, so the oldest backup preserves the original
+5. **Backup System**: Creates `.bak` files before modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise
 
 ### Pattern Configuration
 
@@ -258,7 +258,7 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 - The tool respects `.gitignore` files automatically via the `ignore` crate; `scan` skips hidden files and directories by default too, and accepts `--hidden` / `--no-ignore` to include hidden or ignored files
 - Binary files are automatically skipped based on content detection
 - `replace` never processes symlinks to files: each is skipped with `Skipping symlink: <path>` on stderr, and its target is edited only under its own path (a directory given as input through a symlink is still walked)
-- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the oldest backup preserves the original)
+- Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise (per-file error naming the backup, non-zero exit, also reported by `--dry-run`; `ob undo`, `ob clean-backups` or `--no-backup` gets past it)
 - `replace` records every `.bak` it creates under `$XDG_CACHE_HOME/oober/backups/` (one JSON file per backup). `undo` and `clean-backups` act only on recorded backups under `--dir` and leave other `*.bak` files alone unless `--all-bak` is given; `undo --dry-run` previews
 - Empty lines left after block removal are automatically cleaned up
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors (multi-line removals can also use `blocks`)

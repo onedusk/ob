@@ -59,6 +59,13 @@ pub enum Error {
     #[error("replace finished with {0} file(s) failed")]
     ReplaceFailed(usize),
 
+    /// A file `replace` refuses to change: something it cannot treat as this
+    /// file's backup already sits at the `.bak` path.
+    #[error(
+        "backup {0} already exists and oober cannot tell that it still matches this file, so the file was left unchanged; run `ob undo` to restore the backup or `ob clean-backups` to remove it (add --all-bak if oober did not create it), or pass --no-backup"
+    )]
+    BackupExists(PathBuf),
+
     /// A file that was modified, but whose backup could not be recorded.
     #[error(
         "the file was modified, but its backup {0} could not be recorded ({1}); `ob undo` restores it only with --all-bak"

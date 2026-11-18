@@ -1230,6 +1230,146 @@ fn undo_continues_past_a_failed_restore_and_exits_nonzero() {
 }
 
 #[test]
+fn replace_refuses_a_file_edited_since_its_backup_was_made() {
+    // Verified failure: with a.txt.bak already there, a second replace
+    // modified a.txt with no backup of its current state and no warning, so
+    // a later undo rolled back to before the first run and wiped every edit
+    // made in between.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+    replace_alpha_with_beta(dir);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+
+    // A hand edit; the added line changes the size, so the check does not
+    // hang on the clock's resolution.
+    let edited = "beta one\nalpha by hand\n";
+    fs::write(&file, edited).unwrap();
+
+    let second_run = |dry_run: bool| {
+        let mut cmd = ob();
+        cmd.arg("replace").arg(dir).arg("-p").arg("alpha");
+        cmd.arg("-r").arg("beta");
+        if dry_run {
+            cmd.arg("--dry-run");
+        }
+        cmd.assert().failure().stderr(contains("a.txt.bak"));
+        assert_eq!(
+            fs::read_to_string(&file).unwrap(),
+            edited,
+            "the hand edit must be intact (dry_run: {dry_run})"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+            "alpha one\n"
+        );
+    };
+    // The dry run reports the refusal the real run makes.
+    second_run(true);
+    second_run(false);
+
+    // --no-backup is the stated way through.
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .arg("--no-backup")
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "beta one\nbeta by hand\n"
+    );
+}
+
+#[test]
+fn replace_twice_without_an_edit_between_keeps_the_oldest_backup() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+
+    replace_alpha_with_beta(dir);
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("beta")
+        .arg("-r")
+        .arg("gamma")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "gamma one\n");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+        "alpha one\n"
+    );
+
+    ob().arg("undo").arg("-d").arg(dir).assert().success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+}
+
+#[test]
+fn replace_refuses_a_file_whose_bak_path_is_taken() {
+    // Verified failure: a user's own .bak (or a directory at that path) made
+    // replace modify the file with no backup at all, and a dangling symlink
+    // there had the backup written through it to wherever it pointed.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let outside = TempDir::new().unwrap();
+    let link_target = outside.path().join("elsewhere.txt");
+
+    fs::write(dir.join("user.txt"), "alpha user\n").unwrap();
+    fs::write(dir.join("user.txt.bak"), "my own copy\n").unwrap();
+    fs::write(dir.join("dir.txt"), "alpha dir\n").unwrap();
+    fs::create_dir(dir.join("dir.txt.bak")).unwrap();
+    #[cfg(unix)]
+    {
+        fs::write(dir.join("link.txt"), "alpha link\n").unwrap();
+        std::os::unix::fs::symlink(&link_target, dir.join("link.txt.bak")).unwrap();
+    }
+    fs::write(dir.join("free.txt"), "alpha free\n").unwrap();
+
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .failure()
+        .stderr(contains("user.txt.bak"))
+        .stderr(contains("dir.txt.bak"));
+
+    let read = |name: &str| fs::read_to_string(dir.join(name)).unwrap();
+    assert_eq!(read("user.txt"), "alpha user\n");
+    assert_eq!(read("user.txt.bak"), "my own copy\n");
+    assert_eq!(read("dir.txt"), "alpha dir\n");
+    assert!(dir.join("dir.txt.bak").is_dir());
+    assert_eq!(fs::read_dir(dir.join("dir.txt.bak")).unwrap().count(), 0);
+    #[cfg(unix)]
+    {
+        assert_eq!(read("link.txt"), "alpha link\n");
+        assert!(
+            fs::symlink_metadata(dir.join("link.txt.bak"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+    assert!(
+        !link_target.exists(),
+        "nothing may be created through a symlink at the .bak path"
+    );
+
+    // A file whose .bak path is free is still processed and backed up.
+    assert_eq!(read("free.txt"), "beta free\n");
+    assert_eq!(read("free.txt.bak"), "alpha free\n");
+}
+
+#[test]
 fn replace_dry_run_leaves_files_byte_identical() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path();
