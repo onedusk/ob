@@ -15,7 +15,6 @@ use std::time::SystemTime;
 ///   "hash". This is much faster but can miss changes that don't affect metadata.
 pub struct Fingerprinter {
     use_content_hash: bool,
-    quick_mode: bool,
 }
 
 impl Fingerprinter {
@@ -26,10 +25,7 @@ impl Fingerprinter {
     /// * `use_content_hash` - If `true`, the fingerprinter will use content hashing.
     ///   Otherwise, it will use the quicker metadata-based approach.
     pub fn new(use_content_hash: bool) -> Self {
-        Self {
-            use_content_hash,
-            quick_mode: !use_content_hash,
-        }
+        Self { use_content_hash }
     }
 
     /// Generates a `FileFingerprint` for a given file path.
@@ -94,13 +90,10 @@ impl Fingerprinter {
     /// without reading the file. Only when sizes match does quick mode compare the
     /// modification time and content hash mode compute and compare the full
     /// content hash.
-    pub fn has_file_changed(&self, path: &Path, cached_state: &FileState) -> Result<bool> {
-        Ok(self.check_file(path, cached_state)?.0)
-    }
-
-    /// Like [`Self::has_file_changed`], but also returns the fresh
-    /// `FileFingerprint` when the comparison had to compute one, so callers can
-    /// reuse it instead of reading the file again.
+    ///
+    /// Besides the changed flag it returns the fresh `FileFingerprint` when the
+    /// comparison had to compute one, so callers can reuse it instead of reading
+    /// the file again.
     ///
     /// The fingerprint is `None` when the file is unchanged (the cached state is
     /// still valid) and when a size mismatch short-circuited the comparison
@@ -119,7 +112,7 @@ impl Fingerprinter {
         }
 
         let modified = metadata.modified()?;
-        let hash = if self.quick_mode {
+        let hash = if !self.use_content_hash {
             // Just check modification time
             if modified == cached_state.modified {
                 return Ok((false, None));
@@ -202,19 +195,11 @@ mod tests {
 
         // Same size, different content: only the content hash can see this.
         std::fs::write(file.path(), b"bbbb").unwrap();
-        assert!(
-            fingerprinter
-                .has_file_changed(file.path(), &cached)
-                .unwrap()
-        );
+        assert!(fingerprinter.check_file(file.path(), &cached).unwrap().0);
 
         // Identical content is reported unchanged.
         std::fs::write(file.path(), b"aaaa").unwrap();
-        assert!(
-            !fingerprinter
-                .has_file_changed(file.path(), &cached)
-                .unwrap()
-        );
+        assert!(!fingerprinter.check_file(file.path(), &cached).unwrap().0);
     }
 
     #[test]
@@ -261,12 +246,12 @@ mod tests {
         cached.size += 1; // mismatched size: metadata alone must decide
 
         // Make the file unreadable: hashing it would fail, so a successful
-        // has_file_changed proves the size check short-circuited the hash.
+        // check_file proves the size check short-circuited the hash.
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
-        let changed = fingerprinter.has_file_changed(file.path(), &cached);
+        let changed = fingerprinter.check_file(file.path(), &cached);
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        assert!(changed.unwrap());
+        assert!(changed.unwrap().0);
     }
 
     #[test]
