@@ -1014,6 +1014,221 @@ fn replace_undo_round_trip_restores_content_with_gitignored_backups() {
     );
 }
 
+/// Runs `ob replace <dir> -p alpha -r beta` and asserts success.
+fn replace_alpha_with_beta(dir: &Path) {
+    ob().arg("replace")
+        .arg(dir)
+        .arg("-p")
+        .arg("alpha")
+        .arg("-r")
+        .arg("beta")
+        .assert()
+        .success();
+}
+
+#[test]
+fn undo_and_clean_backups_leave_bak_files_oober_did_not_create() {
+    // Verified failure: undo treated every *.bak in the tree as its own. A
+    // user's settings.json.bak was copied over the live settings.json and
+    // deleted, an orphan db/prod.sql.bak was "restored" into a new
+    // db/prod.sql, and a gitignored node_modules/z.js.bak was restored too;
+    // clean-backups deleted all three.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+
+    // Best effort: without git the .gitignore is inert and the assertions
+    // below still hold.
+    let _ = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(dir)
+        .output();
+    fs::write(dir.join(".gitignore"), "node_modules/\n").unwrap();
+
+    // None of the user's live files contains the pattern.
+    fs::write(dir.join("settings.json"), "{\"theme\": \"dark\"}\n").unwrap();
+    fs::write(dir.join("settings.json.bak"), "{\"theme\": \"light\"}\n").unwrap();
+    fs::create_dir(dir.join("db")).unwrap();
+    fs::write(dir.join("db").join("prod.sql.bak"), "-- dump\n").unwrap();
+    fs::create_dir(dir.join("node_modules")).unwrap();
+    fs::write(dir.join("node_modules").join("z.js"), "live()\n").unwrap();
+    fs::write(dir.join("node_modules").join("z.js.bak"), "old()\n").unwrap();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+
+    let assert_user_files_untouched = |step: &str| {
+        let read = |rel: &str| fs::read_to_string(dir.join(rel)).unwrap();
+        assert_eq!(
+            read("settings.json"),
+            "{\"theme\": \"dark\"}\n",
+            "after {step}"
+        );
+        assert_eq!(
+            read("settings.json.bak"),
+            "{\"theme\": \"light\"}\n",
+            "after {step}"
+        );
+        assert_eq!(read("db/prod.sql.bak"), "-- dump\n", "after {step}");
+        assert!(
+            !dir.join("db").join("prod.sql").exists(),
+            "after {step}: an orphan .bak must not be restored into a new file"
+        );
+        assert_eq!(read("node_modules/z.js"), "live()\n", "after {step}");
+        assert_eq!(read("node_modules/z.js.bak"), "old()\n", "after {step}");
+    };
+
+    replace_alpha_with_beta(dir);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+    assert_user_files_untouched("replace");
+
+    // undo restores oober's own backup only, and says what it left alone.
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .assert()
+        .success()
+        .stdout(contains("--all-bak"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+    assert!(!dir.join("a.txt.bak").exists());
+    assert_user_files_untouched("undo");
+
+    // clean-backups removes oober's own backup only.
+    replace_alpha_with_beta(dir);
+    assert!(dir.join("a.txt.bak").exists());
+    ob().arg("clean-backups")
+        .arg("-d")
+        .arg(dir)
+        .assert()
+        .success()
+        .stdout(contains("--all-bak"));
+    assert!(!dir.join("a.txt.bak").exists());
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+    assert_user_files_untouched("clean-backups");
+}
+
+#[test]
+fn undo_restores_the_backup_of_a_hidden_file_named_as_input() {
+    // The backup walk skips hidden paths; the backup record still finds it.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join(".env");
+    fs::write(&file, "alpha one\n").unwrap();
+
+    replace_alpha_with_beta(&file);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+
+    ob().arg("undo").arg("-d").arg(dir).assert().success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+    assert!(!dir.join(".env.bak").exists());
+}
+
+#[test]
+fn undo_and_clean_backups_all_bak_act_on_unrecorded_backups() {
+    // Backups made by 0.1.1, or whose record was lost with the cache dir.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    fs::write(dir.join("a.txt"), "modified\n").unwrap();
+    fs::write(dir.join("a.txt.bak"), "original\n").unwrap();
+    fs::write(dir.join("b.txt.bak"), "stale\n").unwrap();
+
+    // The preview changes nothing.
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .arg("--all-bak")
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("Would restore"));
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "modified\n");
+    assert!(!dir.join("b.txt").exists());
+
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .arg("--all-bak")
+        .arg("--keep-backups")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original\n");
+    assert_eq!(fs::read_to_string(dir.join("b.txt")).unwrap(), "stale\n");
+
+    ob().arg("clean-backups")
+        .arg("-d")
+        .arg(dir)
+        .arg("--all-bak")
+        .assert()
+        .success();
+    assert!(!dir.join("a.txt.bak").exists());
+    assert!(!dir.join("b.txt.bak").exists());
+}
+
+#[test]
+fn undo_dry_run_changes_nothing() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let file = dir.join("a.txt");
+    fs::write(&file, "alpha one\n").unwrap();
+    replace_alpha_with_beta(dir);
+
+    ob().arg("undo")
+        .arg("-d")
+        .arg(dir)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(contains("Would restore"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "beta one\n");
+    assert_eq!(
+        fs::read_to_string(dir.join("a.txt.bak")).unwrap(),
+        "alpha one\n"
+    );
+
+    // The record survived the preview: a real undo still restores.
+    ob().arg("undo").arg("-d").arg(dir).assert().success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
+}
+
+#[test]
+fn undo_continues_past_a_failed_restore_and_exits_nonzero() {
+    // Verified failure: the first restore that failed aborted the run, so
+    // the files after it in walk order were never restored.
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path();
+    let names = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"];
+    for name in names {
+        fs::write(dir.join(name), "alpha one\n").unwrap();
+    }
+    replace_alpha_with_beta(dir);
+
+    // Three files can no longer be restored: a directory sits at each path.
+    // Whichever of them the walk reaches first, the other files must still
+    // be restored.
+    let blocked = ["a.txt", "c.txt", "e.txt"];
+    for name in blocked {
+        fs::remove_file(dir.join(name)).unwrap();
+        fs::create_dir(dir.join(name)).unwrap();
+    }
+
+    ob().arg("undo").arg("-d").arg(dir).assert().failure();
+
+    for name in names {
+        if blocked.contains(&name) {
+            assert!(dir.join(name).is_dir(), "the directory must be left alone");
+            assert_eq!(
+                fs::read_to_string(dir.join(format!("{name}.bak"))).unwrap(),
+                "alpha one\n",
+                "the backup of a failed restore must be kept"
+            );
+        } else {
+            assert_eq!(
+                fs::read_to_string(dir.join(name)).unwrap(),
+                "alpha one\n",
+                "{name} must be restored despite the failures"
+            );
+        }
+    }
+}
+
 #[test]
 fn replace_dry_run_leaves_files_byte_identical() {
     let temp = TempDir::new().unwrap();

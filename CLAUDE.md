@@ -71,7 +71,7 @@ ob replace --dir /path/to/process --pattern "shadow-sm" --replacement "shadow-in
 # Dry-run mode (preview changes)
 ob replace --dir /path/to/process --config replace_config.yaml --dry-run
 
-# Clean up backup files
+# Clean up oober's backup files
 ob clean-backups --dir /path/to/process
 
 # Replace with specific extensions
@@ -81,11 +81,17 @@ ob replace --dir /path --config replace_config.yaml -x js,ts
 ### Undo Changes
 
 ```bash
-# Restore files from backups
+# Restore files from the backups oober created
 ob undo --dir /path
+
+# Preview what would be restored
+ob undo --dir /path --dry-run
 
 # Keep backup files after restore
 ob undo --dir /path --keep-backups
+
+# Also restore .bak files oober has no record of creating
+ob undo --dir /path --all-bak
 ```
 
 ### Clean Up Backup Files
@@ -94,8 +100,11 @@ ob undo --dir /path --keep-backups
 # Preview backup files without removing
 ob clean-backups --dir /path/to/process --dry-run
 
-# Remove all backup files
+# Remove oober's backup files
 ob clean-backups --dir /path/to/process
+
+# Also remove .bak files oober has no record of creating
+ob clean-backups --dir /path/to/process --all-bak
 ```
 
 ## Architecture
@@ -109,6 +118,7 @@ src/
  cli.rs              # Command-line argument parsing with clap
  scanner.rs          # Pattern scanning implementation
  replacer.rs         # Pattern replacement, undo, and backup management
+ backup_records.rs   # Records of the .bak files replace created
  file_renamer.rs     # Batch file renaming with regex patterns
  patterns.rs         # Pattern structure definitions and built-in presets
  config.rs           # YAML configuration parsing and config file resolution
@@ -249,6 +259,7 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 - Binary files are automatically skipped based on content detection
 - `replace` never processes symlinks to files: each is skipped with `Skipping symlink: <path>` on stderr, and its target is edited only under its own path (a directory given as input through a symlink is still walked)
 - Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten (the oldest backup preserves the original)
+- `replace` records every `.bak` it creates under `$XDG_CACHE_HOME/oober/backups/` (one JSON file per backup). `undo` and `clean-backups` act only on recorded backups under `--dir` and leave other `*.bak` files alone unless `--all-bak` is given; `undo --dry-run` previews
 - Empty lines left after block removal are automatically cleaned up
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors (multi-line removals can also use `blocks`)
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)

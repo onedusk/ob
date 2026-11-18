@@ -1,3 +1,4 @@
+use crate::backup_records;
 use crate::cli::Preset;
 use crate::config::{ConfigLoader, ReplaceConfig};
 use crate::errors::{Error, Result};
@@ -10,12 +11,13 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use regex::{Captures, Regex};
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::SystemTime;
 use tempfile::NamedTempFile;
 
 /// Core engine for finding and replacing patterns in files.
@@ -49,12 +51,144 @@ pub struct ProcessResult {
     pub preview: Option<String>,
 }
 
+/// Options for [`Replacer::undo`], mirroring the flags of the `undo` subcommand.
+#[derive(Clone, Copy)]
+pub struct UndoOptions {
+    /// If `true`, the `.bak` files (and their records) are kept after restoring.
+    pub keep_backups: bool,
+    /// If `true`, `*.bak` files oober has no record of creating are restored too.
+    pub all_bak: bool,
+    /// If `true`, the files that would be restored are listed and nothing changes.
+    pub dry_run: bool,
+}
+
 /// Statistics from an `undo` operation.
 pub struct UndoStats {
-    /// The number of backup files found.
+    /// The number of backup files undo acted on (or would, in a dry run).
     pub found: usize,
     /// The number of files successfully restored from backups.
     pub restored: usize,
+    /// The number of backups that could not be restored.
+    pub failed: usize,
+    /// The number of `*.bak` files left alone because oober has no record of
+    /// creating them. Always 0 with `all_bak`.
+    pub unrecorded: usize,
+}
+
+/// The backups under a directory, as `undo` and `clean-backups` see them.
+#[derive(Default)]
+struct BackupCandidates {
+    /// Backups oober has a record of creating, as (backup, original) paths.
+    recorded: Vec<(PathBuf, PathBuf)>,
+    /// `*.bak` files found by the walk that oober has no record of creating.
+    unrecorded: Vec<PathBuf>,
+    /// Recorded backups whose file no longer exists.
+    stale: Vec<PathBuf>,
+}
+
+/// Finds the backups under `dir`: the recorded ones, plus every other
+/// `*.bak` file the walk reaches.
+fn find_backups(dir: &Path) -> BackupCandidates {
+    // Recorded backups under `dir`, by the path their record is keyed by.
+    // The walk below takes out the ones it reaches, so none is listed twice.
+    let mut records: HashMap<PathBuf, PathBuf> = fs::canonicalize(dir)
+        .map(|canonical| backup_records::list_under(&canonical))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|record| (record.backup, record.original))
+        .collect();
+    let mut backups = BackupCandidates::default();
+
+    // Backups created by `replace` can be gitignored (e.g. "*.bak"), so walk
+    // with ignore-file processing disabled, but keep hidden filtering on:
+    // descending into hidden directories would offer user-owned .bak files
+    // (e.g. a pre-existing .config/settings.bak) to --all-bak, and would
+    // walk .git. The backup of a hidden file named as a `replace` input is
+    // found through its record instead.
+    let mut walker = WalkBuilder::new(dir);
+    walker
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .ignore(false)
+        .parents(false);
+
+    for entry in walker.build() {
+        // A single unreadable entry must not kill the whole run.
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!("Warning: skipping unreadable path: {e}");
+                continue;
+            }
+        };
+        let path = entry.path();
+        if path.is_file() && is_backup_file(path) {
+            let recorded = backup_records::canonical_path(path)
+                .ok()
+                .and_then(|key| records.remove(&key))
+                .is_some();
+            if recorded {
+                backups
+                    .recorded
+                    .push((path.to_path_buf(), path.with_extension("")));
+            } else {
+                backups.unrecorded.push(path.to_path_buf());
+            }
+        }
+    }
+
+    // Recorded backups the walk did not reach: backups of hidden inputs,
+    // and paths where something other than a file sits now.
+    for (backup, original) in records {
+        if fs::symlink_metadata(&backup).is_ok() {
+            backups.recorded.push((backup, original));
+        } else {
+            backups.stale.push(backup);
+        }
+    }
+
+    backups
+}
+
+/// Restores `original` from `backup`, writing through a temp file in the
+/// original's directory and keeping the backup's permissions.
+///
+/// Refuses when the backup is not a regular file, or when something other
+/// than a regular file sits at the original's path: neither is followed or
+/// replaced.
+fn restore_backup(backup: &Path, original: &Path) -> Result<()> {
+    let backup_metadata = fs::symlink_metadata(backup)?;
+    if !backup_metadata.is_file() {
+        return Err(
+            std::io::Error::other(format!("{} is not a regular file", backup.display())).into(),
+        );
+    }
+    if fs::symlink_metadata(original).is_ok_and(|m| !m.is_file()) {
+        return Err(std::io::Error::other(format!(
+            "{} exists and is not a regular file",
+            original.display()
+        ))
+        .into());
+    }
+    let Some(parent) = original.parent() else {
+        return Err(format!("Could not get parent directory for {}", original.display()).into());
+    };
+
+    let mut temp_file = NamedTempFile::new_in(parent)?;
+    std::io::copy(&mut fs::File::open(backup)?, &mut temp_file)?;
+    fs::set_permissions(temp_file.path(), backup_metadata.permissions())?;
+    temp_file.persist(original)?;
+    Ok(())
+}
+
+/// Says how many `*.bak` files were left alone for lack of a backup record.
+fn print_unrecorded_hint(unrecorded: usize) {
+    if unrecorded > 0 {
+        println!(
+            "Left alone: {unrecorded} .bak file(s) oober has no record of creating (preview them with --all-bak --dry-run)"
+        );
+    }
 }
 
 /// A `regex::Replacer` that expands the replacement string exactly like the
@@ -238,13 +372,17 @@ impl Replacer {
 
         // Write if changed
         if total_changes > 0 && !options.dry_run {
+            // The backup path, and whether this call created the backup.
+            let mut backup: Option<(PathBuf, bool)> = None;
             if options.create_backup {
                 let backup_path = format!("{}.bak", path.display());
                 // Never overwrite an existing backup: the oldest backup is the
                 // pre-oober original, which undo must be able to restore.
-                if !Path::new(&backup_path).exists() {
+                let created = !Path::new(&backup_path).exists();
+                if created {
                     fs::copy(path, &backup_path)?;
                 }
+                backup = Some((PathBuf::from(backup_path), created));
             }
 
             // Write atomically using tempfile
@@ -262,6 +400,22 @@ impl Replacer {
                     format!("Could not get parent directory for {}", path.display()).into(),
                 );
             }
+
+            // Record the backup as oober's own, with the size and mtime the
+            // file has now that it is written: undo and clean-backups act
+            // only on recorded backups. A new backup gets a new record; a
+            // kept older backup has its record refreshed, if it has one.
+            if let Some((backup_path, created)) = backup {
+                let created_at = if created {
+                    Some(SystemTime::now())
+                } else {
+                    backup_records::load(&backup_path).map(|record| record.created)
+                };
+                if let Some(created_at) = created_at {
+                    backup_records::write(&backup_path, path, created_at)
+                        .map_err(|e| Error::BackupRecord(backup_path, e.to_string()))?;
+                }
+            }
         }
 
         Ok(ProcessResult {
@@ -271,56 +425,70 @@ impl Replacer {
         })
     }
 
-    /// Scans a directory for `.bak` files and restores them.
+    /// Restores the files under `dir` from their `.bak` backups.
     ///
-    /// # Arguments
-    ///
-    /// * `dir` - The directory to scan for backup files.
-    /// * `keep_backups` - If `false`, the `.bak` files will be deleted after being restored.
-    pub fn undo(dir: &Path, keep_backups: bool) -> Result<UndoStats> {
-        let mut found = 0;
-        let mut restored = 0;
+    /// Only backups oober has a record of creating are restored, unless
+    /// `options.all_bak` also selects the other `*.bak` files in the tree.
+    /// A restore that fails is reported and counted, and the rest still run.
+    pub fn undo(dir: &Path, options: UndoOptions) -> Result<UndoStats> {
+        let backups = find_backups(dir);
+        let mut stats = UndoStats {
+            found: 0,
+            restored: 0,
+            failed: 0,
+            unrecorded: 0,
+        };
 
-        // Backups created by `replace` can be gitignored (e.g. "*.bak"), so
-        // walk with ignore-file processing disabled — but keep hidden
-        // filtering on: `replace` only processes files visible under the
-        // standard filters, so a backup it creates can never live behind a
-        // hidden path. Descending into hidden directories would restore
-        // user-owned .bak files (e.g. a pre-existing .config/settings.bak)
-        // over live files, and would walk .git.
-        let mut walker = WalkBuilder::new(dir);
-        walker
-            .git_ignore(false)
-            .git_global(false)
-            .git_exclude(false)
-            .ignore(false)
-            .parents(false);
+        let mut targets = backups.recorded;
+        if options.all_bak {
+            targets.extend(backups.unrecorded.into_iter().map(|backup| {
+                let original = backup.with_extension("");
+                (backup, original)
+            }));
+        } else {
+            stats.unrecorded = backups.unrecorded.len();
+        }
 
-        for entry in walker.build() {
-            // A single unreadable entry must not kill the whole run.
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(e) => {
-                    eprintln!("Warning: skipping unreadable path: {e}");
-                    continue;
-                }
-            };
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bak") {
-                found += 1;
-                let original_path = path.with_extension("");
-                if path.exists() {
-                    fs::copy(path, &original_path)?;
-                    if !keep_backups {
-                        fs::remove_file(path)?;
+        for (backup, original) in targets {
+            stats.found += 1;
+            if options.dry_run {
+                println!("Would restore {}", original.display());
+                continue;
+            }
+
+            let result = restore_backup(&backup, &original).and_then(|()| {
+                if options.keep_backups {
+                    // The record describes the file as oober last wrote it,
+                    // and that is now the restore.
+                    if let Some(record) = backup_records::load(&backup) {
+                        backup_records::write(&backup, &original, record.created)?;
                     }
-                    restored += 1;
-                    println!("Restored {}", original_path.display());
+                } else {
+                    fs::remove_file(&backup)?;
+                    backup_records::remove(&backup);
+                }
+                Ok(())
+            });
+            match result {
+                Ok(()) => {
+                    stats.restored += 1;
+                    println!("Restored {}", original.display());
+                }
+                Err(e) => {
+                    stats.failed += 1;
+                    eprintln!("Failed to restore {}: {}", original.display(), e);
                 }
             }
         }
 
-        Ok(UndoStats { found, restored })
+        // A record whose backup is gone describes nothing any more.
+        if !options.dry_run {
+            for backup in &backups.stale {
+                backup_records::remove(backup);
+            }
+        }
+
+        Ok(stats)
     }
 }
 
@@ -611,67 +779,78 @@ pub fn run_replace(options: ReplaceOptions) -> Result<()> {
 }
 
 /// The main entry point for the `undo` command.
-pub fn run_undo(dir: PathBuf, keep_backups: bool) -> Result<()> {
-    let stats = Replacer::undo(&dir, keep_backups)?;
-    println!(
-        "\nBackups found: {}, restored: {}",
-        stats.found, stats.restored
-    );
+pub fn run_undo(dir: PathBuf, options: UndoOptions) -> Result<()> {
+    let stats = Replacer::undo(&dir, options)?;
+    if options.dry_run {
+        println!("\nBackups found: {}", stats.found);
+        print_unrecorded_hint(stats.unrecorded);
+        println!("\nRun without --dry-run to restore these files");
+    } else {
+        println!(
+            "\nBackups found: {}, restored: {}",
+            stats.found, stats.restored
+        );
+        print_unrecorded_hint(stats.unrecorded);
+    }
+
+    if stats.failed > 0 {
+        println!("Errors: {}", stats.failed);
+        return Err(Error::UndoFailed(stats.failed));
+    }
     Ok(())
 }
 
 /// The main entry point for the `clean-backups` command.
-pub fn run_clean_backups(dir: PathBuf, dry_run: bool) -> Result<()> {
+///
+/// Only backups oober has a record of creating are removed, unless `all_bak`
+/// also selects the other `*.bak` files in the tree.
+pub fn run_clean_backups(dir: PathBuf, dry_run: bool, all_bak: bool) -> Result<()> {
     let mut found = 0;
     let mut removed = 0;
     let mut total_size = 0u64;
 
     println!("Searching for backup files in {}...\n", dir.display());
 
-    // Backups created by `replace` can be gitignored (e.g. "*.bak"), so walk
-    // with ignore-file processing disabled — but keep hidden filtering on:
-    // `replace` only processes files visible under the standard filters, so a
-    // backup it creates can never live behind a hidden path. Descending into
-    // hidden directories would delete user-owned .bak files that oober never
-    // created, and would walk .git.
-    let mut walker = WalkBuilder::new(&dir);
-    walker
-        .git_ignore(false)
-        .git_global(false)
-        .git_exclude(false)
-        .ignore(false)
-        .parents(false);
+    let backups = find_backups(&dir);
+    let mut targets: Vec<PathBuf> = backups
+        .recorded
+        .into_iter()
+        .map(|(backup, _)| backup)
+        .collect();
+    let unrecorded = if all_bak {
+        targets.extend(backups.unrecorded);
+        0
+    } else {
+        backups.unrecorded.len()
+    };
 
-    for entry in walker.build() {
-        // A single unreadable entry must not kill the whole run.
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                eprintln!("Warning: skipping unreadable path: {e}");
-                continue;
-            }
-        };
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("bak") {
-            found += 1;
+    for path in &targets {
+        found += 1;
 
-            if let Ok(metadata) = path.metadata() {
-                total_size += metadata.len();
-            }
+        if let Ok(metadata) = path.metadata() {
+            total_size += metadata.len();
+        }
 
-            if dry_run {
-                println!("Would remove: {}", path.display());
-            } else {
-                match fs::remove_file(path) {
-                    Ok(_) => {
-                        removed += 1;
-                        println!("Removed: {}", path.display());
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to remove {}: {}", path.display(), e);
-                    }
+        if dry_run {
+            println!("Would remove: {}", path.display());
+        } else {
+            match fs::remove_file(path) {
+                Ok(_) => {
+                    removed += 1;
+                    backup_records::remove(path);
+                    println!("Removed: {}", path.display());
+                }
+                Err(e) => {
+                    eprintln!("Failed to remove {}: {}", path.display(), e);
                 }
             }
+        }
+    }
+
+    // A record whose backup is gone describes nothing any more.
+    if !dry_run {
+        for backup in &backups.stale {
+            backup_records::remove(backup);
         }
     }
 
@@ -679,11 +858,13 @@ pub fn run_clean_backups(dir: PathBuf, dry_run: bool) -> Result<()> {
     if dry_run {
         println!("Backup files found: {found}");
         println!("Total size: {:.2} MB", total_size as f64 / 1_048_576.0);
+        print_unrecorded_hint(unrecorded);
         println!("\nRun without --dry-run to remove these files");
     } else {
         println!("Backup files found: {found}");
         println!("Backup files removed: {removed}");
         println!("Space freed: {:.2} MB", total_size as f64 / 1_048_576.0);
+        print_unrecorded_hint(unrecorded);
     }
 
     Ok(())
@@ -815,6 +996,19 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// `undo` as run with no flags: only recorded backups are restored.
+    const RECORDED_ONLY: UndoOptions = UndoOptions {
+        keep_backups: false,
+        all_bak: false,
+        dry_run: false,
+    };
+
+    /// `undo --all-bak`, for tests that create their `.bak` files by hand.
+    const ALL_BAK: UndoOptions = UndoOptions {
+        all_bak: true,
+        ..RECORDED_ONLY
+    };
+
     #[test]
     fn test_undo_and_clean_backups_find_gitignored_but_skip_hidden_backups() {
         let temp_dir = TempDir::new().unwrap();
@@ -843,7 +1037,7 @@ mod tests {
         fs::write(dir.join(".env"), "live").unwrap();
         fs::write(dir.join(".env.bak"), "user data").unwrap();
 
-        let stats = Replacer::undo(dir, false).unwrap();
+        let stats = Replacer::undo(dir, ALL_BAK).unwrap();
         assert_eq!(stats.found, 1);
         assert_eq!(stats.restored, 1);
         assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original");
@@ -858,7 +1052,7 @@ mod tests {
         // clean-backups discovery: gitignored backups are removed, hidden
         // .bak files are left alone.
         fs::write(dir.join("b.txt.bak"), "stale").unwrap();
-        run_clean_backups(dir.to_path_buf(), false).unwrap();
+        run_clean_backups(dir.to_path_buf(), false, true).unwrap();
         assert!(!dir.join("b.txt.bak").exists());
         assert!(dir.join(".env.bak").exists());
     }
@@ -877,7 +1071,7 @@ mod tests {
         fs::write(&settings, "live").unwrap();
         fs::write(&settings_bak, "old").unwrap();
 
-        let stats = Replacer::undo(dir, false).unwrap();
+        let stats = Replacer::undo(dir, ALL_BAK).unwrap();
         assert_eq!(stats.found, 0);
         assert_eq!(stats.restored, 0);
         assert_eq!(
@@ -887,7 +1081,7 @@ mod tests {
         );
         assert!(settings_bak.exists());
 
-        run_clean_backups(dir.to_path_buf(), false).unwrap();
+        run_clean_backups(dir.to_path_buf(), false, true).unwrap();
         assert!(
             settings_bak.exists(),
             "clean-backups must not delete user-owned hidden backups"
@@ -2056,7 +2250,13 @@ Debug.Print(total)
         fs::create_dir(&locked).unwrap();
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
 
-        let undo_result = Replacer::undo(dir, true);
+        let undo_result = Replacer::undo(
+            dir,
+            UndoOptions {
+                keep_backups: true,
+                ..ALL_BAK
+            },
+        );
 
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
         let stats = undo_result.expect("an unreadable subdirectory must not fail undo");
@@ -2064,11 +2264,107 @@ Debug.Print(total)
         assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "original");
 
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
-        let clean_result = run_clean_backups(dir.to_path_buf(), false);
+        let clean_result = run_clean_backups(dir.to_path_buf(), false, true);
 
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
         clean_result.expect("an unreadable subdirectory must not fail clean-backups");
         assert!(!dir.join("a.txt.bak").exists());
+    }
+
+    #[test]
+    fn test_undo_drops_the_backup_record_and_keep_backups_refreshes_it() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let file = dir.join("t.txt");
+        let backup = dir.join("t.txt.bak");
+        fs::write(&file, "alpha\n").unwrap();
+
+        let replacer = single_pattern_replacer("alpha", "longer text");
+        let options = ProcessOptions {
+            create_backup: true,
+            dry_run: false,
+        };
+        replacer.process_file(&file, options).unwrap();
+        let record = backup_records::load(&backup).expect("replace must record its backup");
+        assert_eq!(record.size, fs::metadata(&file).unwrap().len());
+
+        // A dry run touches neither the files nor the record.
+        let stats = Replacer::undo(
+            dir,
+            UndoOptions {
+                dry_run: true,
+                ..RECORDED_ONLY
+            },
+        )
+        .unwrap();
+        assert_eq!((stats.found, stats.restored), (1, 0));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "longer text\n");
+        assert!(backup_records::load(&backup).is_some());
+
+        // --keep-backups keeps the record, describing the restored file.
+        let stats = Replacer::undo(
+            dir,
+            UndoOptions {
+                keep_backups: true,
+                ..RECORDED_ONLY
+            },
+        )
+        .unwrap();
+        assert_eq!(stats.restored, 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "alpha\n");
+        let kept = backup_records::load(&backup).expect("--keep-backups must keep the record");
+        assert_eq!(kept.size, 6);
+        assert_eq!(kept.mtime, fs::metadata(&file).unwrap().modified().unwrap());
+        assert_eq!(kept.created, record.created);
+
+        // A plain undo consumes the backup and its record.
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!(stats.restored, 1);
+        assert!(!backup.exists());
+        assert!(backup_records::load(&backup).is_none());
+
+        // A record whose backup was deleted by hand is dropped, not an error.
+        replacer.process_file(&file, options).unwrap();
+        fs::remove_file(&backup).unwrap();
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
+        assert_eq!((stats.found, stats.failed), (0, 0));
+        assert!(backup_records::load(&backup).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_undo_refuses_to_restore_through_or_from_a_symlink() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir = temp_dir.path();
+        let outside = TempDir::new().unwrap();
+        let target = outside.path().join("target.txt");
+        fs::write(&target, "outside").unwrap();
+
+        // The original's path holds a symlink: restoring must not replace
+        // the link or write through it.
+        std::os::unix::fs::symlink(&target, dir.join("a.txt")).unwrap();
+        fs::write(dir.join("a.txt.bak"), "backup").unwrap();
+        // The backup itself is a symlink: its target is not oober's backup.
+        fs::write(dir.join("b.txt"), "live").unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("b.txt.bak")).unwrap();
+
+        let stats = Replacer::undo(dir, ALL_BAK).unwrap();
+        assert_eq!((stats.found, stats.restored, stats.failed), (2, 0, 2));
+        assert!(
+            fs::symlink_metadata(dir.join("a.txt"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "outside");
+        assert_eq!(fs::read_to_string(dir.join("b.txt")).unwrap(), "live");
+        assert!(dir.join("a.txt.bak").exists());
+        assert!(
+            fs::symlink_metadata(dir.join("b.txt.bak"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
     }
 
     #[test]
@@ -2100,7 +2396,7 @@ Debug.Print(total)
         );
 
         // Undo restores the original content.
-        let stats = Replacer::undo(dir, false).unwrap();
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
         assert_eq!(stats.restored, 1);
         assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
     }
@@ -2156,7 +2452,7 @@ Debug.Print(total)
         );
 
         // Undo restores the true original.
-        let stats = Replacer::undo(dir, false).unwrap();
+        let stats = Replacer::undo(dir, RECORDED_ONLY).unwrap();
         assert_eq!(stats.restored, 1);
         assert_eq!(fs::read_to_string(&file).unwrap(), "alpha one\n");
     }

@@ -112,17 +112,24 @@ ob rename --dir /path/to/project --pattern '^(\d+)_(.+?)(\.[^.]+)?$' --replaceme
 ### Manage backups
 
 ```bash
-# Restore files from backups
+# Restore files from the backups oober created
 ob undo --dir /path
+
+# Preview what would be restored
+ob undo --dir /path --dry-run
 
 # Keep backup files after restore
 ob undo --dir /path --keep-backups
 
-# Remove backup files after verification
+# Remove oober's backup files after verification
 ob clean-backups --dir /path
 
 # Preview backup files before removal (shows total size)
 ob clean-backups --dir /path --dry-run
+
+# Also act on .bak files oober has no record of creating (preview first)
+ob undo --dir /path --all-bak --dry-run
+ob clean-backups --dir /path --all-bak --dry-run
 ```
 
 ## Configuration
@@ -297,7 +304,7 @@ Note: Output order is not guaranteed when using multiple workers. Use `-w 1` or 
 
 `ob scan -i` (`--incremental`) caches per-file scan state so unchanged files are skipped on the next run. `--content-hash` compares content hashes instead of modification timestamps, `--force-full` re-scans everything, and `--clear-cache` deletes the cache first.
 
-The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/oober/` on Linux, `~/Library/Caches/oober/` on macOS), one JSON file per scanned project. It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
+The cache is stored at `$XDG_CACHE_HOME/oober/` (default when unset: `~/.cache/oober/` on Linux, `~/Library/Caches/oober/` on macOS), one JSON file per scanned project (the `backups/` directory beside them holds `replace`'s backup records, see [`undo`](#undo)). It contains the matched line contents from previous scans in plaintext - if you scan for secrets with `--incremental`, the matches (including the secrets themselves) are copied into this cache. Treat the cache as sensitive. On Unix the cache directory is kept owner-only (`0700`) and cache files are written with `0600` permissions; use `--clear-cache` to remove a project's cached results.
 
 `--no-cache-content` keeps matched text out of the on-disk cache entirely: only pattern names, file fingerprints, and line numbers are stored, and on a cache hit the matched lines are re-read from the unchanged files to reconstruct the output (if a re-read fails, the file is re-scanned). This keeps the incremental speedup without persisting secrets to disk; it requires `--incremental`.
 
@@ -335,6 +342,14 @@ Options:
 
 - `-d, --dir <PATH>` - Directory to restore
 - `--keep-backups` - Don't delete backup files after restore
+- `--all-bak` - Also restore `.bak` files oober has no record of creating
+- `--dry-run` - Preview files to be restored (`Would restore <path>`) without changing anything
+
+`undo` restores only the backups that `replace` created. Every time `replace` creates a `<file>.bak`, it writes a small record (the backup's path, the file's path, and the file's size and modification time after the write) to `$XDG_CACHE_HOME/oober/backups/` (the same cache directory as the incremental-scan cache; owner-only on Unix). `undo` and `clean-backups` act on the recorded backups under `--dir`, including the backup of a hidden file that was named as a `replace` input. Any other `*.bak` file in the tree, such as your own `settings.json.bak`, is left alone, and the summary says how many were.
+
+Pass `--all-bak` to also act on the unrecorded `*.bak` files found in the tree (hidden files and directories are still skipped). You need it for backups made by oober 0.1.1 and after the cache directory was deleted. It restores every such `x.bak` over `x`, so preview with `--all-bak --dry-run` first.
+
+Each file is restored through a temporary file in its own directory and gets the backup's permissions. A restore that fails is reported and the others still run; `undo` then exits non-zero and says how many failed. `undo` refuses to restore over anything that is not a regular file (a directory or a symlink at the file's path) and from a backup that is not a regular file.
 
 ### `clean-backups`
 
@@ -344,6 +359,9 @@ Options:
 
 - `-d, --dir <PATH>` - Directory to clean
 - `--dry-run` - Preview files to be removed
+- `--all-bak` - Also remove `.bak` files oober has no record of creating
+
+Like `undo`, `clean-backups` removes only the backups `replace` recorded creating, and reports how many other `*.bak` files it left alone.
 
 ### `rename`
 

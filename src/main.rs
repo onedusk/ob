@@ -70,16 +70,23 @@ fn run() -> Result<()> {
             "undo" => {
                 eprintln!("Error: Missing required argument: --dir <DIR>\n");
                 eprintln!("USAGE EXAMPLES:");
-                eprintln!("  ob undo -d .                    # Restore all files");
+                eprintln!("  ob undo -d .                    # Restore files from oober's backups");
+                eprintln!("  ob undo -d . --dry-run          # Preview what would be restored");
                 eprintln!("  ob undo -d src/ --keep-backups  # Restore but keep .bak files");
+                eprintln!(
+                    "  ob undo -d . --all-bak          # Also restore .bak files oober did not record"
+                );
                 eprintln!("\nFor more options: ob undo --help");
                 process::exit(1);
             }
             "clean-backups" => {
                 eprintln!("Error: Missing required argument: --dir <DIR>\n");
                 eprintln!("USAGE EXAMPLES:");
-                eprintln!("  ob clean-backups -d .            # Remove all backup files");
+                eprintln!("  ob clean-backups -d .            # Remove oober's backup files");
                 eprintln!("  ob clean-backups -d . --dry-run  # Preview what would be deleted");
+                eprintln!(
+                    "  ob clean-backups -d . --all-bak  # Also remove .bak files oober did not record"
+                );
                 eprintln!("\nFor more options: ob clean-backups --help");
                 process::exit(1);
             }
@@ -177,8 +184,24 @@ fn run() -> Result<()> {
                 })
             }
         }
-        Commands::Undo { dir, keep_backups } => replacer::run_undo(dir, keep_backups),
-        Commands::CleanBackups { dir, dry_run } => replacer::run_clean_backups(dir, dry_run),
+        Commands::Undo {
+            dir,
+            keep_backups,
+            all_bak,
+            dry_run,
+        } => replacer::run_undo(
+            dir,
+            replacer::UndoOptions {
+                keep_backups,
+                all_bak,
+                dry_run,
+            },
+        ),
+        Commands::CleanBackups {
+            dir,
+            dry_run,
+            all_bak,
+        } => replacer::run_clean_backups(dir, dry_run, all_bak),
         Commands::Rename {
             dir,
             pattern,

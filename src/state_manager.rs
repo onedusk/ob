@@ -124,7 +124,7 @@ impl StateManager {
     /// as valid resolved to the relative path `./oober` — a plaintext cache of
     /// matched lines dropped inside the scanned project, where it can get
     /// committed.
-    fn base_cache_dir(xdg_cache_home: Option<std::ffi::OsString>) -> PathBuf {
+    pub(crate) fn base_cache_dir(xdg_cache_home: Option<std::ffi::OsString>) -> PathBuf {
         if let Some(xdg) = xdg_cache_home {
             if !xdg.is_empty() {
                 return PathBuf::from(xdg);

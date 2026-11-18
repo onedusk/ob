@@ -252,9 +252,14 @@ pub enum Commands {
 
     /// Restore files from backups (undo replacements)
     ///
+    /// Only the .bak files that `replace` recorded creating are restored;
+    /// any other .bak file in the tree is left alone and counted.
+    ///
     /// EXAMPLES:
-    ///   ob undo -d .                    # Restore all files in current dir
+    ///   ob undo -d .                    # Restore files from oober's backups
+    ///   ob undo -d . --dry-run          # Preview what would be restored
     ///   ob undo -d src/ --keep-backups  # Restore but keep .bak files
+    ///   ob undo -d . --all-bak          # Also restore .bak files oober did not record
     Undo {
         /// The directory where the `replace` operation was run.
         #[arg(short, long, required = true)]
@@ -263,13 +268,26 @@ pub enum Commands {
         /// Keep the backup files after restoring the original files.
         #[arg(long)]
         keep_backups: bool,
+
+        /// Also restore .bak files oober has no record of creating (backups
+        /// made by 0.1.1, or made before the cache directory was wiped).
+        #[arg(long)]
+        all_bak: bool,
+
+        /// Preview which files would be restored without changing anything.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Remove backup files without restoring
     ///
+    /// Only the .bak files that `replace` recorded creating are removed;
+    /// any other .bak file in the tree is left alone and counted.
+    ///
     /// EXAMPLES:
     ///   ob clean-backups -d . --dry-run  # Preview what would be deleted
-    ///   ob clean-backups -d .            # Delete all .bak files
+    ///   ob clean-backups -d .            # Delete oober's .bak files
+    ///   ob clean-backups -d . --all-bak  # Also delete .bak files oober did not record
     CleanBackups {
         /// The directory to clean of backup files.
         #[arg(short, long, required = true)]
@@ -278,6 +296,11 @@ pub enum Commands {
         /// Preview which backup files would be removed without deleting them.
         #[arg(long)]
         dry_run: bool,
+
+        /// Also remove .bak files oober has no record of creating (backups
+        /// made by 0.1.1, or made before the cache directory was wiped).
+        #[arg(long)]
+        all_bak: bool,
     },
 
     /// Batch rename files using regex patterns

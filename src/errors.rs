@@ -58,6 +58,16 @@ pub enum Error {
     /// A replace run that finished with per-file errors.
     #[error("replace finished with {0} file(s) failed")]
     ReplaceFailed(usize),
+
+    /// A file that was modified, but whose backup could not be recorded.
+    #[error(
+        "the file was modified, but its backup {0} could not be recorded ({1}); `ob undo` restores it only with --all-bak"
+    )]
+    BackupRecord(PathBuf, String),
+
+    /// An undo run that finished with per-file errors.
+    #[error("undo finished with {0} file(s) failed")]
+    UndoFailed(usize),
 }
 
 /// A convenient type alias for `Result<T, oober::errors::Error>`.

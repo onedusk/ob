@@ -14,6 +14,7 @@
 //! The library is designed to be fast, using parallel processing with Rayon and
 //! efficient directory traversal with the `ignore` crate.
 
+mod backup_records;
 pub mod cli;
 pub mod config;
 pub mod errors;
