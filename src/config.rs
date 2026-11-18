@@ -23,11 +23,14 @@ pub struct ScanConfig {
 /// Configuration for the replace operation.
 #[derive(Deserialize, Clone)]
 pub struct ReplaceConfig {
-    /// A list of regex patterns to search for.
+    /// A list of regex patterns to search for. May be omitted in a config
+    /// that only removes `blocks`.
+    #[serde(default)]
     pub patterns: Vec<String>,
     /// A list of replacement strings. Each element corresponds to a pattern.
     /// `None` (`null` in YAML) deletes the line *after* each line matching the
     /// pattern; the matching line itself is kept.
+    #[serde(default)]
     pub replacements: Vec<Option<String>>,
     /// A list of blocks to ignore during replacement.
     #[serde(default)]
@@ -163,6 +166,35 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    /// Writes `yaml` to a config file in `dir` and returns its path.
+    fn write_config(dir: &Path, yaml: &str) -> PathBuf {
+        let path = dir.join("config.yaml");
+        fs::write(&path, yaml).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_blocks_only_replace_config_loads() {
+        // The README's "Remove copyright headers" example, as written: it
+        // has no `patterns` and no `replacements` key.
+        let temp = TempDir::new().unwrap();
+        let path = write_config(
+            temp.path(),
+            "# remove_copyright.yaml
+blocks:
+  - start: \"# Copyright (c) 2024\"
+    end: \"# DEALINGS IN THE SOFTWARE.\"
+",
+        );
+
+        let config = ConfigLoader::load_replace_config(&path).unwrap();
+        assert!(config.patterns.is_empty());
+        assert!(config.replacements.is_empty());
+        assert_eq!(config.blocks.len(), 1);
+        assert_eq!(config.blocks[0].start, "# Copyright (c) 2024");
+        crate::replacer::Replacer::new(config).unwrap();
+    }
 
     #[test]
     fn test_find_config_uses_path_as_given() {
