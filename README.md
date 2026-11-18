@@ -13,7 +13,7 @@ We currently use it internally to update copyright information, find and change 
 - **Safe replacements** - Replace or remove patterns with automatic `.bak` file creation
 - **Atomic file renaming** - Atomically rename files at scale.
 - **Undo support** - Restore files from backups with a single command
-- **Smart cleanup** - Automatically removes empty lines after block deletion and collapses consecutive empty lines
+- **Local block removal** - A removed block takes only its own lines and the blank lines directly next to it; blank lines elsewhere in the file are left alone
 - **Gitignore aware** - Respects `.gitignore` files automatically via the `ignore` crate (`scan` offers `--hidden` / `--no-ignore` to opt out)
 - **Directory exclusions** - Configure custom directory exclusions (e.g., node_modules, target) in YAML
 - **Backup management** - Clean up backup files when satisfied with changes
@@ -416,7 +416,7 @@ Benchmark on a large codebase (100k files):
 - **Binary detection** - Automatically skips binary files
 - **Gitignore respect** - Won't modify ignored files
 - **Comprehensive error handling** - Graceful failures with clear messages
-- **Empty line cleanup** - Intelligently handles whitespace after deletions
+- **Local block removal** - Removing a block changes only the blank lines directly next to it, never the rest of the file
 
 ## Building from Source
 
@@ -477,20 +477,21 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - The tool respects `.gitignore` files automatically; `scan` can opt out with `--hidden` / `--no-ignore`
 - Binary files are automatically skipped
 - Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise (see [`replace`](#replace))
-- Empty lines left after block removal are automatically cleaned up
+- Block removal changes only the blank lines directly next to the removed block; blank lines elsewhere in the file are left as they are
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)
 
 ## Recent Enhancements
 
-### Empty Line Cleanup
+### Blank Lines Around Removed Blocks
 
-After removing multi-line blocks, the tool automatically:
+Removing a block (`blocks` in a config, or a preset that removes blocks) changes only the block and the blank lines directly next to it. A blank line holds nothing but spaces and tabs.
 
-- Removes all empty lines at the beginning of files
-- Collapses multiple consecutive empty lines to just one
-- Preserves single empty lines between content
-- Maintains proper file endings (preserves final newline if present)
+- A block that has its lines to itself is removed with its indent and its line break, so no empty line is left where it stood
+- When such a block starts the file or follows a blank line, the blank lines directly after it are removed too: a header block leaves no leading blank line, and a block between two paragraphs leaves the blank lines that were above it
+- When such a block ends the file, the blank lines directly before it are removed too
+- A block that shares its first or last line with other code is cut out of that line; the code and its line break stay
+- Everything else is copied byte for byte: blank lines elsewhere in the file (PEP 8 double blank lines, blank lines inside string literals) and every LF or CRLF line ending
 
 ### Backup Management
 

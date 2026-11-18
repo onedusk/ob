@@ -260,7 +260,7 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 - `replace` never processes symlinks to files: each is skipped with `Skipping symlink: <path>` on stderr, and its target is edited only under its own path (a directory given as input through a symlink is still walked)
 - Backups are created as `.bak` files before any modifications; an existing `.bak` is never overwritten: `replace` keeps it when it is oober's own backup and the file is unchanged since oober last wrote it, and refuses the file otherwise (per-file error naming the backup, non-zero exit, also reported by `--dry-run`; `ob undo`, `ob clean-backups` or `--no-backup` gets past it)
 - `replace` records every `.bak` it creates under `$XDG_CACHE_HOME/oober/backups/` (one JSON file per backup). `undo` and `clean-backups` act only on recorded backups under `--dir` and leave other `*.bak` files alone unless `--all-bak` is given; `undo --dry-run` previews
-- Empty lines left after block removal are automatically cleaned up
+- Block removal changes only the blank lines directly next to the removed block; blank lines elsewhere in the file are left as they are
 - `scan` matches patterns line-by-line, so scan patterns cannot span lines; `replace` applies patterns to the whole file content — use `(?m)` for per-line `^`/`$` anchors (multi-line removals can also use `blocks`)
 - Use double backslashes in YAML for regex escapes (e.g., `\\.` for literal dot)
 - Config files are parsed strictly: an unknown key in a scan patterns file or a replace config is an error naming the key. A scan patterns file takes an optional `exclusions` list of names to skip below each input directory (no effect with `-e`, which loads no file)
@@ -270,12 +270,13 @@ hyperfine './target/release/oober scan /path' 'rg pattern /path'
 
 ## Recent Enhancements
 
-### Empty Line Cleanup
-After removing multi-line blocks, the tool automatically:
-- Removes all empty lines at the beginning of files
-- Collapses multiple consecutive empty lines to just one
-- Preserves single empty lines between content
-- Maintains proper file endings (preserves final newline if present)
+### Blank Lines Around Removed Blocks
+Removing a block changes only the block and the blank lines (spaces and tabs only) directly next to it:
+- A block that has its lines to itself is removed with its indent and its line break
+- When such a block starts the file or follows a blank line, the blank lines directly after it are removed too (a header block leaves no leading blank line; a block between two paragraphs leaves the blank lines that were above it)
+- When such a block ends the file, the blank lines directly before it are removed too
+- A block that shares its first or last line with other code is cut out of that line; the code and its line break stay
+- Everything else, blank lines elsewhere in the file and LF/CRLF line endings included, is copied byte for byte
 
 ### Backup Management
 The `clean-backups` command provides:

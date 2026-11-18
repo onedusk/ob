@@ -22,7 +22,7 @@ Designed for large codebases with:
   • Parallel file processing
   • Automatic backup creation
   • Gitignore awareness
-  • Smart empty line cleanup
+  • Block removal that leaves distant blank lines alone
 
 QUICK EXAMPLES:
   ob scan .                           # Scan current dir using ./patterns.yaml

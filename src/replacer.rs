@@ -351,30 +351,13 @@ impl Replacer {
         let mut new_content = Cow::Borrowed(content.as_str());
         let mut total_changes = 0;
 
-        // Remove blocks first, counting matches during the single replace pass
+        // Remove blocks first
         for block in &self.blocks {
-            let mut matches = 0;
-            let replaced = block.replace_all(
-                new_content.as_ref(),
-                CountingReplacer {
-                    replacement: "",
-                    count: &mut matches,
-                },
-            );
+            let (replaced, matches) = remove_blocks(new_content.as_ref(), block);
             if matches > 0 {
                 total_changes += matches;
-                let replaced = replaced.into_owned();
                 new_content = Cow::Owned(replaced);
             }
-        }
-
-        // Clean up excessive empty lines after block removal
-        // TODO: This cleanup logic could be more robust. A more sophisticated
-        // approach would be to parse the code into an AST and remove nodes,
-        // which would preserve formatting more reliably. For now, this is a
-        // simple heuristic.
-        if total_changes > 0 {
-            new_content = Cow::Owned(clean_empty_lines(new_content.as_ref()));
         }
 
         // Process patterns
@@ -1021,37 +1004,76 @@ fn dry_run_preview(old: &str, new: &str) -> String {
     out
 }
 
-/// Cleans up excessive empty lines from a string.
+/// Removes every match of `block` from `content`, returning the result and
+/// the number of blocks removed.
 ///
-/// This is a heuristic to improve formatting after blocks of code have been removed.
-/// It collapses runs of empty lines to a single one and removes leading and
-/// trailing empty lines. Content is rebuilt from `split_inclusive` segments so
-/// every kept line keeps its own terminator (LF or CRLF) byte-for-byte, even
-/// in files that mix endings.
-fn clean_empty_lines(content: &str) -> String {
-    let mut output = String::with_capacity(content.len());
-    // First empty line of the current run; flushed only when more content
-    // follows, so trailing empty lines are dropped.
-    let mut pending_empty: Option<&str> = None;
-    let mut seen_content = false;
+/// A block that shares a line with other text is cut out of that line and
+/// nothing else changes. A block that has its lines to itself goes with its
+/// indent and its line break, and only the blank lines (spaces and tabs only)
+/// directly next to it can go with it: the ones after it when it starts the
+/// file or follows a blank line, and the ones before it when it ends the
+/// file. Every other byte, line terminators included, is copied as is.
+fn remove_blocks(content: &str, block: &Regex) -> (String, usize) {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    let mut count = 0;
 
-    for segment in content.split_inclusive('\n') {
-        let line = segment.strip_suffix('\n').unwrap_or(segment);
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if line.trim().is_empty() {
-            if seen_content && pending_empty.is_none() {
-                pending_empty = Some(segment);
+    // Empty start and end markers match the empty string, which removes
+    // nothing and would never advance.
+    while let Some(m) = block.find(rest).filter(|m| !m.is_empty()) {
+        count += 1;
+        out.push_str(&rest[..m.start()]);
+        rest = &rest[m.end()..];
+
+        // Judged against `out`, so a block is placed by what was kept in
+        // front of it, not by a block removed just before it.
+        let line_start = out.rfind('\n').map_or(0, |i| i + 1);
+        if !is_blank(&out[line_start..]) {
+            continue;
+        }
+        let Some(after_line) = strip_blank_line(rest).or_else(|| is_blank(rest).then_some(""))
+        else {
+            continue;
+        };
+        out.truncate(line_start);
+        rest = after_line;
+
+        if out.is_empty() || trailing_blank_line(&out).is_some() {
+            while let Some(next) = strip_blank_line(rest) {
+                rest = next;
             }
-        } else {
-            if let Some(empty) = pending_empty.take() {
-                output.push_str(empty);
+        }
+        if rest.is_empty() {
+            while let Some(start) = trailing_blank_line(&out) {
+                out.truncate(start);
             }
-            output.push_str(segment);
-            seen_content = true;
         }
     }
 
-    output
+    out.push_str(rest);
+    (out, count)
+}
+
+/// Whether `text` holds nothing but spaces and tabs.
+fn is_blank(text: &str) -> bool {
+    text.bytes().all(|b| b == b' ' || b == b'\t')
+}
+
+/// `text` without its first line, when that line is blank and ends in a line
+/// break (LF or CRLF).
+fn strip_blank_line(text: &str) -> Option<&str> {
+    let text = text.trim_start_matches([' ', '\t']);
+    text.strip_prefix("\r\n")
+        .or_else(|| text.strip_prefix('\n'))
+}
+
+/// The start of the last line of `text`, when that line is blank and ends in
+/// a line break (LF or CRLF).
+fn trailing_blank_line(text: &str) -> Option<usize> {
+    let line = text.strip_suffix('\n')?;
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let start = line.rfind('\n').map_or(0, |i| i + 1);
+    is_blank(&line[start..]).then_some(start)
 }
 
 #[cfg(test)]
@@ -1647,7 +1669,7 @@ mod tests {
     }
 
     #[test]
-    fn test_block_removal_and_cleanup_preserve_crlf() {
+    fn test_block_removal_preserves_crlf() {
         use crate::config::Block;
 
         let temp_dir = TempDir::new().unwrap();
@@ -1683,9 +1705,140 @@ mod tests {
         assert!(result.modified);
         assert_eq!(
             fs::read_to_string(&file).unwrap(),
-            "keep one\r\n\r\nkeep two\r\n",
-            "block removal + empty-line cleanup must stay CRLF-terminated"
+            "keep one\r\nkeep two\r\n",
+            "block removal must stay CRLF-terminated"
         );
+    }
+
+    /// Runs a blocks-only replace over `content` and returns the file after it.
+    fn remove_block(content: &str, start: &str, end: &str) -> String {
+        use crate::config::Block;
+
+        let temp_dir = TempDir::new().unwrap();
+        let file = temp_dir.path().join("t.txt");
+        fs::write(&file, content).unwrap();
+
+        let replacer = Replacer::new(ReplaceConfig {
+            patterns: vec![],
+            replacements: vec![],
+            blocks: vec![Block {
+                start: start.into(),
+                end: end.into(),
+            }],
+            extensions: None,
+            exclude: None,
+        })
+        .unwrap();
+        replacer
+            .process_file(
+                &file,
+                ProcessOptions {
+                    create_backup: false,
+                    dry_run: false,
+                },
+            )
+            .unwrap();
+
+        fs::read_to_string(&file).unwrap()
+    }
+
+    #[test]
+    fn test_block_removal_leaves_distant_blank_lines_alone() {
+        let header = "# Copyright (c) 2024 Example\n# Permission is hereby granted.\n# DEALINGS IN THE SOFTWARE.\n\n";
+        // PEP 8 double blank lines between functions, and a triple-quoted
+        // string that holds blank lines of its own.
+        let body = "import os\n\n\ndef first():\n    return \"\"\"line one\n\n\nline four\n\"\"\"\n\n\ndef second():\n    return os.getcwd()\n";
+
+        for eol in ["\n", "\r\n"] {
+            let input = format!("{header}{body}").replace('\n', eol);
+            assert_eq!(
+                remove_block(&input, "# Copyright (c)", "# DEALINGS IN THE SOFTWARE."),
+                body.replace('\n', eol),
+                "only the header block and the blank line after it may go (eol {eol:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_block_removal_touches_only_adjacent_blank_lines() {
+        let rm = |content: &str| remove_block(content, "# S", "# E");
+
+        for eol in ["\n", "\r\n"] {
+            let check = |input: &str, expected: &str| {
+                assert_eq!(
+                    rm(&input.replace('\n', eol)),
+                    expected.replace('\n', eol),
+                    "input {input:?} (eol {eol:?})"
+                );
+            };
+
+            // Top of the file: no leading blank line is left.
+            check("# S\nx\n# E\n\n\ncode\n", "code\n");
+            // Between two paragraphs: the one separating blank line is left.
+            check("one\n\n# S\nx\n# E\n\ntwo\n", "one\n\ntwo\n");
+            // Between adjacent lines: no blank line appears.
+            check("one\n# S\nx\n# E\ntwo\n", "one\ntwo\n");
+            // Attached to the code above: the gap below it is kept whole.
+            check(
+                "def a():\n    y = 1\n    # S\n    x\n    # E\n\n\ndef b():\n",
+                "def a():\n    y = 1\n\n\ndef b():\n",
+            );
+            // Attached to the code below: the gap above it is kept whole.
+            check("one\n\n\n# S\nx\n# E\ntwo\n", "one\n\n\ntwo\n");
+            // End of the file: no trailing blank line is left.
+            check("code\n\n# S\nx\n# E\n", "code\n");
+            check("code\n\n# S\nx\n# E", "code\n");
+            // Consecutive blocks at the top are judged against what was kept.
+            check("# S\nx\n# E\n\n# S\ny\n# E\n\ncode\n", "code\n");
+            // Blank lines away from the block are not collapsed or stripped.
+            check(
+                "\n\none\n\n\n\ntwo\n# S\nx\n# E\nthree\n\n\n",
+                "\n\none\n\n\n\ntwo\nthree\n\n\n",
+            );
+        }
+    }
+
+    #[test]
+    fn test_block_sharing_a_line_leaves_the_other_code_intact() {
+        let rm = |content: &str| remove_block(content, "/* S */", "/* E */");
+
+        for eol in ["\n", "\r\n"] {
+            let check = |input: &str, expected: &str| {
+                assert_eq!(
+                    rm(&input.replace('\n', eol)),
+                    expected.replace('\n', eol),
+                    "input {input:?} (eol {eol:?})"
+                );
+            };
+
+            // Code before the start marker keeps its line break.
+            check(
+                "x = 1; /* S */\nnoise\n/* E */\n\nnext();\n",
+                "x = 1; \n\nnext();\n",
+            );
+            // Code after the end marker stays on its own line.
+            check(
+                "keep\n\n/* S */\nnoise\n/* E */ next();\n",
+                "keep\n\n next();\n",
+            );
+            // A block inside one line of code.
+            check("a /* S */ x /* E */ b\n", "a  b\n");
+            // A block with its lines to itself goes with its indent.
+            check(
+                "    one();\n    /* S */\n    noise\n    /* E */\n    two();\n",
+                "    one();\n    two();\n",
+            );
+            // The first end marker closes the block even when code follows it.
+            check(
+                "/* S */ a /* E */ code();\nkeep\n/* E */\n",
+                " code();\nkeep\n/* E */\n",
+            );
+        }
+    }
+
+    #[test]
+    fn test_block_with_empty_markers_removes_nothing() {
+        assert_eq!(remove_block("one\n\n\ntwo\n", "", ""), "one\n\n\ntwo\n");
     }
 
     #[test]
@@ -1729,11 +1882,11 @@ mod tests {
         // Output must be byte-identical to the plain &str replace_all path,
         // including `$1` capture-group expansion.
         let re = Regex::new(pattern).unwrap();
-        let expected = re.replace_all("foo1 foo22 keep\n\nfoo333\n\nplain\n", replacement);
+        let expected = re.replace_all("foo1 foo22 keep\nfoo333\nplain\n", replacement);
         assert_eq!(fs::read_to_string(&file).unwrap(), expected);
         assert_eq!(
             fs::read_to_string(&file).unwrap(),
-            "bar1 bar22 keep\n\nbar333\n\nplain\n"
+            "bar1 bar22 keep\nbar333\nplain\n"
         );
     }
 
@@ -1818,30 +1971,6 @@ mod tests {
             .unwrap();
         assert!(result.modified);
         assert!(result.preview.is_none());
-    }
-
-    #[test]
-    fn test_clean_empty_lines_preserves_crlf() {
-        assert_eq!(
-            clean_empty_lines("a\r\n\r\n\r\n\r\nb\r\n"),
-            "a\r\n\r\nb\r\n"
-        );
-        // LF content stays LF.
-        assert_eq!(clean_empty_lines("a\n\n\n\nb\n"), "a\n\nb\n");
-    }
-
-    #[test]
-    fn test_clean_empty_lines_preserves_mixed_line_endings() {
-        // Verified failure: one CRLF line made detect_line_ending rejoin
-        // the whole file with CRLF. Every kept line must keep its own
-        // ending byte-for-byte.
-        assert_eq!(
-            clean_empty_lines("a\ntwo\r\n\n\r\n\nb\n"),
-            "a\ntwo\r\n\nb\n",
-            "collapsing empty lines must not rewrite untouched lines' endings"
-        );
-        // Leading and trailing empty lines are removed either way.
-        assert_eq!(clean_empty_lines("\r\n\na\r\nb\n\r\n\n"), "a\r\nb\n");
     }
 
     #[test]
